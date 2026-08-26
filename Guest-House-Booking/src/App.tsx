@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import logo  from '../assets/icons/logo.png'
-import guetsHouse from '../assets/images/guestHouse.jpg'
+import guetsHouse from '../Assets/images/guestHouse.jpg'
 import { useRef } from 'react'
 import Login from './pages/login.tsx'
 import { confirmBooking, createBookingHold, getAvailableRooms, type BookingHold, type Session } from './api'
