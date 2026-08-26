@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import logo  from '../assets/icons/logo.png'
+import logo  from '../Assets/icons/logo.png'
 import guetsHouse from '../Assets/images/guestHouse.jpg'
 import { useRef } from 'react'
 import Login from './pages/login.tsx'
