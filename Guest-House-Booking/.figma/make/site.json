@@ -1,0 +1,10 @@
+{
+  "description": "Book rooms in a single hotel by selecting available floors and rooms through an intuitive grid interface for seamless reservations.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
