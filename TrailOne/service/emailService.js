@@ -1,5 +1,16 @@
 import { transporter } from "../config/mail.js";
 
+async function sendToRecipient(type, email, mailOptions) {
+    try {
+        const info = await transporter.sendMail({ ...mailOptions, to: email });
+        console.info(`Booking email accepted by SMTP (${type}).`, info.messageId);
+        return { recipientType: type, status: "SMTP_ACCEPTED", messageId: info.messageId };
+    } catch (error) {
+        console.error(`Booking email failed (${type}):`, error.message);
+        return { recipientType: type, status: "FAILED", error: error.message };
+    }
+}
+
 export async function sendAccessCode(email, code) {
 
     const mailOptions = {
@@ -16,8 +27,86 @@ export async function sendAccessCode(email, code) {
     return info;
 }
 
+export async function sendBookingConfirmationEmails(details, facultyInChargeEmail = details?.FacultyInChargeEmail) {
+    if (!details) {
+        throw new Error("Booking details are required to send post-payment emails.");
+    }
 
-export async function sendBookingConfirmation(details) {
+    const bookingId = details.BookingId || details.bookingId || "N/A";
+    const bookingReference = details.BookingReference || details.bookingReference || `BOOKING-${bookingId}`;
+    const occupantName = details.FullName || details.fullName || details.OccupantName || "Guest";
+    const occupantEmail = details.Email || details.email || details.OccupantEmail;
+    const initiatorName = details.BookingInitiatorName || details.InitiatorName || occupantName;
+    const initiatorEmail = details.BookingInitiatorEmail || details.InitiatorEmail || occupantEmail;
+    const facultyInChargeName = details.FacultyInChargeName || details.facultyInChargeName || "Faculty In-Charge";
+    const securityEmail = details.SecurityEmail || process.env.SECURITY_EMAIL || "security@rguktn.ac.in";
+    const roomSummary = Array.isArray(details.rooms) ? details.rooms.map((room) => room.RoomNo || room.roomNo || "N/A").join(", ") : "N/A";
+    const paymentAmount = Number(details.totalAmount || details.TotalAmount || 0);
+    const paymentStatus = details.PaymentStatus || "SUCCESS";
+    const checkIn = details.InDate || details.inDate || "N/A";
+    const checkOut = details.OutDate || details.outDate || "N/A";
+    const roomLabel = details.RoomName || roomSummary || "Guest Room";
+
+    const recipients = [
+        { email: occupantEmail, name: occupantName, type: "occupant" },
+        { email: facultyInChargeEmail, name: facultyInChargeName, type: "faculty-in-charge" },
+        { email: securityEmail, name: "Security In-Charge", type: "security" },
+        { email: initiatorEmail, name: initiatorName, type: "booking-initiator" },
+    ].filter((entry) => entry.email && /^\S+@\S+\.\S+$/.test(entry.email));
+
+    if (!facultyInChargeEmail || !/^\S+@\S+\.\S+$/.test(facultyInChargeEmail)) {
+        throw new Error("A valid faculty in-charge email is required to send booking notifications.");
+    }
+
+    const uniqueRecipients = [];
+    const seen = new Set();
+    for (const recipient of recipients) {
+        const key = `${recipient.type}:${recipient.email.toLowerCase()}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            uniqueRecipients.push(recipient);
+        }
+    }
+
+    const results = [];
+
+    for (const recipient of uniqueRecipients) {
+        const subject = recipient.type === "occupant"
+            ? `Booking Confirmation - ${bookingReference}`
+            : recipient.type === "faculty-in-charge"
+                ? `Guest House Booking Notification - ${bookingReference}`
+                : recipient.type === "security"
+                    ? `Security Check-in Notification - ${bookingReference}`
+                    : `Booking Confirmation for Initiator - ${bookingReference}`;
+
+        const text = [
+            `Booking confirmation for ${recipient.name}`,
+            `Booking ID: ${bookingId}`,
+            `Reference: ${bookingReference}`,
+            `Occupant Name: ${occupantName}`,
+            `Booking Initiator: ${initiatorName}`,
+            `Faculty In-Charge: ${facultyInChargeName}`,
+            `Room: ${roomLabel}`,
+            `Check-in: ${formatDate(checkIn)}`,
+            `Check-out: ${formatDate(checkOut)}`,
+            `Payment Status: ${paymentStatus}`,
+            `Amount: ${formatCurrency(paymentAmount)}`,
+        ].join("\n");
+
+        const result = await sendToRecipient(recipient.type, recipient.email, {
+            from: `"Hotel Booking System" <${process.env.EMAIL_USER}>`,
+            subject,
+            text,
+            html: `<div style="font-family: Arial, sans-serif; padding: 20px;"><h2>Booking Confirmation</h2><p>Dear ${escapeHtml(recipient.name)},</p><p><strong>Booking ID:</strong> ${escapeHtml(bookingId)}<br /><strong>Reference:</strong> ${escapeHtml(bookingReference)}<br /><strong>Occupant:</strong> ${escapeHtml(occupantName)}<br /><strong>Initiator:</strong> ${escapeHtml(initiatorName)}<br /><strong>Faculty In-Charge:</strong> ${escapeHtml(facultyInChargeName)}<br /><strong>Room:</strong> ${escapeHtml(roomLabel)}<br /><strong>Check-in:</strong> ${escapeHtml(formatDate(checkIn))}<br /><strong>Check-out:</strong> ${escapeHtml(formatDate(checkOut))}<br /><strong>Payment Status:</strong> ${escapeHtml(paymentStatus)}<br /><strong>Amount:</strong> ${escapeHtml(formatCurrency(paymentAmount))}</p></div>`,
+        });
+        results.push(result);
+    }
+
+    return results;
+}
+
+
+export async function sendBookingConfirmation(details, facultyInChargeEmail = details?.FacultyInChargeEmail) {
 
     if (!details) {
         throw new Error("Booking details are required to send confirmation email.");
@@ -83,6 +172,10 @@ export async function sendBookingConfirmation(details) {
 
     if (!customerEmail) {
         throw new Error("Customer email is missing from booking details.");
+    }
+
+    if (!facultyInChargeEmail || !/^\S+@\S+\.\S+$/.test(facultyInChargeEmail)) {
+        throw new Error("A valid faculty in-charge email is required to send the booking confirmation.");
     }
 
     /*
@@ -484,21 +577,25 @@ Hotel Booking System
 
     const mailOptions = {
         from: `"Hotel Booking System" <${process.env.EMAIL_USER}>`,
-        to: customerEmail,
         subject,
         text,
         html
     };
 
+    const recipients = [{ type: "guest", email: customerEmail }];
+    if (facultyInChargeEmail.toLowerCase() !== customerEmail.toLowerCase()) {
+        recipients.push({ type: "faculty-in-charge", email: facultyInChargeEmail });
+    }
 
-    const info = await transporter.sendMail(mailOptions);
+    return Promise.all(recipients.map(({ type, email }) => sendToRecipient(type, email, mailOptions)));
+}
 
-    console.log(
-        "Booking confirmation email sent:",
-        info.messageId
-    );
-
-    return info;
+function formatCurrency(amount) {
+    return new Intl.NumberFormat("en-IN", {
+        style: "currency",
+        currency: "INR",
+        maximumFractionDigits: 0,
+    }).format(Number(amount || 0));
 }
 
 

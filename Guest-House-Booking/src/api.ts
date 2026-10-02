@@ -1,4 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api").replace(/\/$/, "")
+const API_BASE_URL = (
+  import.meta.env.DEV ? "/api" : import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api"
+).replace(/\/$/, "")
 
 export type Session = {
   token: string
@@ -57,6 +59,8 @@ export type BookingHold = {
     inDate: string
     outDate: string
     expiresAt: string
+    facultyInChargeName: string
+    facultyInChargeEmail: string
     rooms: ApiRoom[]
     pricePerRoomPerDay: number
     roomCount: number
@@ -65,12 +69,30 @@ export type BookingHold = {
   }
 }
 
-export async function createBookingHold(session: Session, inDate: string, outDate: string, roomIds: number[]) {
+export async function createBookingHold(session: Session, inDate: string, outDate: string, roomIds: number[], facultyInChargeName: string, facultyInChargeEmail: string) {
   const headers = { Authorization: `Bearer ${session.token}` }
   return request<BookingHold>("/bookings/holds", {
     method: "POST",
     headers,
-    body: JSON.stringify({ customerId: session.customer.customerId, inDate, outDate, roomIds }),
+    body: JSON.stringify({ customerId: session.customer.customerId, inDate, outDate, roomIds, facultyInChargeName, facultyInChargeEmail }),
+  })
+}
+
+export async function createPaymentOrder(session: Session, requestId: number) {
+  const headers = { Authorization: `Bearer ${session.token}` }
+  return request<{ order: { id: string; amount: number; currency: string; keyId: string; receipt: string } }>("/payments/create-order", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ requestId }),
+  })
+}
+
+export async function verifyPayment(session: Session, requestId: number, payment: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) {
+  const headers = { Authorization: `Bearer ${session.token}` }
+  return request<{ booking: Booking }>("/payments/verify", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ requestId, ...payment }),
   })
 }
 

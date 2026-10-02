@@ -5,6 +5,7 @@ import pool from "./config/db.js";
 import authRouter from "./router/authRouter.js";
 import roomRouter from "./router/roomRouter.js";
 import bookingRouter from "./router/bookingRouter.js";
+import paymentRouter from "./router/paymentRouter.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
 if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET must be set in .env");
@@ -42,6 +43,7 @@ app.get("/health", async (req, res, next) => {
 app.use("/api/auth", authRouter);
 app.use("/api/rooms", roomRouter);
 app.use("/api/bookings", bookingRouter);
+app.use("/api/payments", paymentRouter);
 app.use(notFound);
 app.use(errorHandler);
 

@@ -3,7 +3,26 @@ import logo  from '../Assets/icons/logo.png'
 import guetsHouse from '../Assets/images/guestHouse.jpg'
 import { useRef } from 'react'
 import Login from './pages/login.tsx'
-import { confirmBooking, createBookingHold, getAvailableRooms, type BookingHold, type Session } from './api'
+import { confirmBooking, createBookingHold, createPaymentOrder, getAvailableRooms, type BookingHold, type Session, verifyPayment } from './api'
+
+declare global {
+  interface Window {
+    Razorpay?: any
+  }
+}
+
+async function loadRazorpayScript() {
+  if (typeof window === 'undefined') return false
+  if (window.Razorpay) return true
+
+  return new Promise<boolean>((resolve) => {
+    const script = document.createElement('script')
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.onload = () => resolve(true)
+    script.onerror = () => resolve(false)
+    document.body.appendChild(script)
+  })
+}
 
 type RoomType = 'standard' 
 type RoomStatus = 'available' | 'selected' | 'unavailable'
@@ -181,6 +200,9 @@ export default function App() {
   const [bookingDone, setBookingDone] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [heldBooking, setHeldBooking] = useState<BookingHold['bookingRequest'] | null>(null)
+  const [facultyInChargeName, setFacultyInChargeName] = useState('')
+  const [facultyInChargeEmail, setFacultyInChargeEmail] = useState('')
+  const [facultyError, setFacultyError] = useState('')
   const [confirmationError, setConfirmationError] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availabilityError, setAvailabilityError] = useState('')
@@ -248,7 +270,10 @@ export default function App() {
         }))
 
       if (!availableFloors.length) {
+        setFloors([])
+        setSelectedFloorId(0)
         setAvailabilityError('No rooms are available for the selected dates.')
+        setStep('selector')
         return
       }
       setFloors(availableFloors)
@@ -262,7 +287,14 @@ export default function App() {
   }
 
   async function createHoldAfterVerification(verifiedSession: Session) {
-    const { bookingRequest } = await createBookingHold(verifiedSession, checkIn, checkOut, allSelectedRooms.map((room) => room.id))
+    const { bookingRequest } = await createBookingHold(
+      verifiedSession,
+      checkIn,
+      checkOut,
+      allSelectedRooms.map((room) => room.id),
+      facultyInChargeName.trim(),
+      facultyInChargeEmail.trim(),
+    )
     setSession(verifiedSession)
     setHeldBooking(bookingRequest)
     setShowLogin(false)
@@ -270,15 +302,78 @@ export default function App() {
     setStep('confirmation')
   }
 
+  function beginBooking() {
+    const email = facultyInChargeEmail.trim()
+    if (facultyInChargeName.trim().length < 2) {
+      setFacultyError('Enter the faculty in-charge name.')
+      return
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFacultyError('Enter a valid faculty email address.')
+      return
+    }
+    setFacultyError('')
+    setShowLogin(true)
+  }
+
   async function submitBooking() {
     if (!session || !heldBooking) return
     setConfirmationError('')
     setIsSubmitting(true)
+
+    try {
+      const razorpayLoaded = await loadRazorpayScript()
+      if (!razorpayLoaded || !window.Razorpay) {
+        throw new Error('Razorpay checkout could not be loaded. Please try again.')
+      }
+
+      const { order } = await createPaymentOrder(session, heldBooking.requestId)
+      const razorpay = new window.Razorpay({
+        key: order.keyId,
+        amount: order.amount,
+        currency: order.currency,
+        name: 'RGUKT Guest House',
+        description: `Booking #${heldBooking.requestId}`,
+        order_id: order.id,
+        image: logo,
+        handler: async function (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) {
+          try {
+            await verifyPayment(session, heldBooking.requestId, response)
+            setBookingDone(true)
+          } catch (error) {
+            setConfirmationError(error instanceof Error ? error.message : 'Payment verification failed. Your booking has not been confirmed.')
+          }
+        },
+        theme: { color: '#2c36cc' },
+        modal: {
+          ondismiss: () => {
+            setConfirmationError('Payment was cancelled. Your booking is not confirmed.')
+          },
+        },
+        prefill: {
+          name: session.customer.fullName,
+          email: session.customer.email,
+        },
+      })
+
+      razorpay.open()
+    } catch (error) {
+      setConfirmationError(error instanceof Error ? error.message : 'Unable to initiate payment.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  async function submitDemoBooking() {
+    if (!session || !heldBooking) return
+    setConfirmationError('')
+    setIsSubmitting(true)
+
     try {
       await confirmBooking(session, heldBooking.requestId)
       setBookingDone(true)
     } catch (error) {
-      setConfirmationError(error instanceof Error ? error.message : 'Unable to confirm your booking.')
+      setConfirmationError(error instanceof Error ? error.message : 'Demo booking failed.')
     } finally {
       setIsSubmitting(false)
     }
@@ -557,6 +652,10 @@ export default function App() {
               <span className="text-black text-right">{guests}</span>
               <span className="text-black/70">Rooms</span>
               <span className="text-black text-right">{summaryRooms.join(', ')}</span>
+              <span className="text-black/70">Faculty In-Charge</span>
+              <span className="text-black text-right">{heldBooking?.facultyInChargeName}</span>
+              <span className="text-black/70">Faculty Email</span>
+              <span className="text-black text-right break-all">{heldBooking?.facultyInChargeEmail}</span>
               <div className="col-span-2 h-px bg-black/5 my-1" />
               <span className="text-[#1E7799] font-semibold">Total</span>
               <span className="text-[#1E7799] font-semibold text-right">
@@ -581,14 +680,24 @@ export default function App() {
               ← Back to Home
             </button>
           ) : (
-            <button
-              onClick={submitBooking}
-              disabled={isSubmitting}
-              className="rounded-xl px-7 py-3 font-semibold text-sm text-white transition-all disabled:opacity-60"
-              style={{ background: '#2c36cc' }}
-            >
-              {isSubmitting ? 'Submitting…' : 'Submit Booking'}
-            </button>
+            <div className="flex w-full gap-3">
+              <button
+                onClick={submitBooking}
+                disabled={isSubmitting}
+                className="flex-1 rounded-xl px-5 py-3 font-semibold text-sm text-white transition-all disabled:opacity-60"
+                style={{ background: '#2c36cc' }}
+              >
+                {isSubmitting ? 'Opening Razorpay…' : 'Pay with Razorpay'}
+              </button>
+              <button
+                onClick={submitDemoBooking}
+                disabled={isSubmitting}
+                className="flex-1 rounded-xl px-5 py-3 font-semibold text-sm text-black transition-all disabled:opacity-60"
+                style={{ background: '#d8d8d8' }}
+              >
+                {isSubmitting ? 'Booking…' : 'Book without payment'}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -818,7 +927,7 @@ export default function App() {
             borderTop: '1px solid rgba(255,255,255,0.08)',
           }}
         >
-          <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+          <div className="max-w-3xl mx-auto px-6 py-4">
             <div className="flex items-center gap-6">
               <div>
                 <p className="text-white/40 text-xs mb-0.5">
@@ -847,17 +956,40 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              // onClick={() => setStep('confirmation')}
-              onClick = {()=> setShowLogin(true)}
-              className="flex items-center gap-2 px-7 py-3 rounded-xl font-semibold text-sm transition-all duration-200 hover:shadow-[0_0_20px_#1e1799] active:scale-95 flex-shrink-0 cursor-pointer"
-              style={{ background: '#2c36cc', color: '#f8f5f5' }}
-            >
-              Confirm Booking
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
+              <label className="text-xs text-white/60">
+                Faculty In-Charge Name
+                <input
+                  value={facultyInChargeName}
+                  onChange={(event) => setFacultyInChargeName(event.target.value)}
+                  autoComplete="name"
+                  placeholder="Full name"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-white px-3 py-2.5 text-sm text-black outline-none focus:border-[#c9a96e]"
+                />
+              </label>
+              <label className="text-xs text-white/60">
+                Faculty Email
+                <input
+                  type="email"
+                  value={facultyInChargeEmail}
+                  onChange={(event) => setFacultyInChargeEmail(event.target.value)}
+                  autoComplete="email"
+                  placeholder="faculty@example.edu"
+                  className="mt-1 w-full rounded-lg border border-white/15 bg-white px-3 py-2.5 text-sm text-black outline-none focus:border-[#c9a96e]"
+                />
+              </label>
+              <button
+                onClick={beginBooking}
+                className="self-end flex items-center justify-center gap-2 px-7 py-3 rounded-xl font-semibold text-sm transition-all duration-200 hover:shadow-[0_0_20px_#1e1799] active:scale-95 cursor-pointer"
+                style={{ background: '#2c36cc', color: '#f8f5f5' }}
+              >
+                Confirm Booking
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+            {facultyError && <p role="alert" className="mt-2 text-sm text-red-300">{facultyError}</p>}
           </div>
         </div>
       )}
