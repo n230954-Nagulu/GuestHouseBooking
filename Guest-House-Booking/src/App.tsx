@@ -3,7 +3,7 @@ import logo  from '../Assets/icons/logo.png'
 import guetsHouse from '../Assets/images/guestHouse.jpg'
 import { useRef } from 'react'
 import Login from './pages/login.tsx'
-import { confirmBooking, createBookingHold, createPaymentOrder, getAvailableRooms, type BookingHold, type Session, verifyPayment } from './api'
+import { confirmBooking, createBookingHold, createPaymentOrder, getAvailableRooms, type BookingHold, type EmailNotification, type Session, verifyPayment } from './api'
 
 declare global {
   interface Window {
@@ -204,6 +204,7 @@ export default function App() {
   const [facultyInChargeEmail, setFacultyInChargeEmail] = useState('')
   const [facultyError, setFacultyError] = useState('')
   const [confirmationError, setConfirmationError] = useState('')
+  const [emailNotice, setEmailNotice] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availabilityError, setAvailabilityError] = useState('')
   const [isLoadingRooms, setIsLoadingRooms] = useState(false)
@@ -299,7 +300,24 @@ export default function App() {
     setHeldBooking(bookingRequest)
     setShowLogin(false)
     setBookingDone(false)
+    setEmailNotice('')
     setStep('confirmation')
+  }
+
+  function describeEmailNotifications(notifications?: EmailNotification[]) {
+    if (!notifications?.length) {
+      return 'Booking confirmed. The server did not report email delivery status; check the backend logs.'
+    }
+
+    const failedTypes = notifications
+      .filter((notification) => notification.status === 'FAILED')
+      .map((notification) => notification.recipientType === 'faculty-in-charge' ? 'faculty' : 'guest')
+
+    if (failedTypes.length) {
+      return `Booking confirmed, but email sending failed for: ${[...new Set(failedTypes)].join(' and ')}. Check the backend logs.`
+    }
+
+    return 'Booking confirmed. The mail server accepted the confirmation emails for the guest and faculty.'
   }
 
   function beginBooking() {
@@ -338,7 +356,8 @@ export default function App() {
         image: logo,
         handler: async function (response: { razorpay_payment_id: string; razorpay_order_id: string; razorpay_signature: string }) {
           try {
-            await verifyPayment(session, heldBooking.requestId, response)
+            const result = await verifyPayment(session, heldBooking.requestId, response)
+            setEmailNotice(describeEmailNotifications(result.emailNotifications))
             setBookingDone(true)
           } catch (error) {
             setConfirmationError(error instanceof Error ? error.message : 'Payment verification failed. Your booking has not been confirmed.')
@@ -370,7 +389,8 @@ export default function App() {
     setIsSubmitting(true)
 
     try {
-      await confirmBooking(session, heldBooking.requestId)
+      const result = await confirmBooking(session, heldBooking.requestId)
+      setEmailNotice(describeEmailNotifications(result.emailNotifications))
       setBookingDone(true)
     } catch (error) {
       setConfirmationError(error instanceof Error ? error.message : 'Demo booking failed.')
@@ -633,7 +653,7 @@ export default function App() {
           <h2 className="text-black text-3xl font-light mb-2">{bookingDone ? "You're all set." : 'Review your booking.'}</h2>
           <p className="text-black/70 text-sm mb-8">
             {bookingDone
-              ? 'A confirmation has been sent to your registered email. We look forward to welcoming you.'
+              ? emailNotice || 'Booking confirmed.'
               : 'Your rooms are temporarily held. Submit the booking to confirm it and receive your email confirmation.'}
           </p>
 

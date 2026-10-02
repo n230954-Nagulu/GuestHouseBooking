@@ -40,6 +40,11 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:5000',
           changeOrigin: true,
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyRequest) => {
+              proxyRequest.removeHeader('origin')
+            })
+          },
         },
       },
       watch: { ignored: ['**/.figma/**'] },

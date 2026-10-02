@@ -27,6 +27,11 @@ export type Booking = {
   totalAmount: number
 }
 
+export type EmailNotification = {
+  recipientType: string
+  status: string
+}
+
 type ApiResponse<T> = T & { success: boolean; message?: string }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
@@ -89,7 +94,7 @@ export async function createPaymentOrder(session: Session, requestId: number) {
 
 export async function verifyPayment(session: Session, requestId: number, payment: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) {
   const headers = { Authorization: `Bearer ${session.token}` }
-  return request<{ booking: Booking }>("/payments/verify", {
+  return request<{ booking: Booking; emailNotifications?: EmailNotification[] }>("/payments/verify", {
     method: "POST",
     headers,
     body: JSON.stringify({ requestId, ...payment }),
@@ -98,5 +103,5 @@ export async function verifyPayment(session: Session, requestId: number, payment
 
 export async function confirmBooking(session: Session, requestId: number) {
   const headers = { Authorization: `Bearer ${session.token}` }
-  return request<{ booking: Booking }>(`/bookings/holds/${requestId}/confirm`, { method: "POST", headers })
+  return request<{ booking: Booking; emailNotifications?: EmailNotification[] }>(`/bookings/holds/${requestId}/confirm`, { method: "POST", headers })
 }
