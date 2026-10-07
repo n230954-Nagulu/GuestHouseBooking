@@ -49,15 +49,15 @@ export async function createPaymentOrder(req, res, next) {
       return res.status(500).json({ success: false, message: "Razorpay is not configured on this server." });
     }
 
-    const connection = await pool.getConnection();
+    const connection = await pool.connect();
 
     try {
-      await connection.beginTransaction();
+      await connection.query("BEGIN");
       await expireHolds(connection);
       const request = await findHoldForCustomer(connection, requestId, req.user.customerId);
 
       if (!request || request.RequestStatus !== "HOLD" || new Date(request.ExpiresAt) <= new Date()) {
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(409).json({ success: false, message: "This booking hold is expired or not available for payment." });
       }
 
@@ -70,13 +70,13 @@ export async function createPaymentOrder(req, res, next) {
       const amount = Number(pricing.totalAmount || 0);
 
       if (!amount || amount <= 0) {
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(400).json({ success: false, message: "Booking amount could not be calculated." });
       }
 
       const existing = await findPaymentByRequestId(connection, requestId);
       if (existing?.PaymentMethod === "DEMO") {
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(409).json({ success: false, message: "This booking request is already using demo mode." });
       }
       const order = await razorpayClient.orders.create({
@@ -107,7 +107,7 @@ export async function createPaymentOrder(req, res, next) {
         });
       }
 
-      await connection.commit();
+      await connection.query("COMMIT");
 
       return res.status(200).json({
         success: true,
@@ -121,7 +121,7 @@ export async function createPaymentOrder(req, res, next) {
         },
       });
     } catch (error) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       throw error;
     } finally {
       connection.release();
@@ -142,24 +142,24 @@ export async function verifyPayment(req, res, next) {
       return res.status(400).json({ success: false, message: "Incomplete Razorpay payment details were provided." });
     }
 
-    const connection = await pool.getConnection();
+    const connection = await pool.connect();
 
     try {
-      await connection.beginTransaction();
+      await connection.query("BEGIN");
       const payment = await findPaymentByRequestId(connection, requestId);
 
       if (!payment) {
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(404).json({ success: false, message: "No payment record exists for this booking request." });
       }
 
       if (payment.PaymentMethod !== "RAZORPAY") {
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(409).json({ success: false, message: "This payment record is not a Razorpay transaction." });
       }
 
       if (payment.PaymentStatus === "SUCCESS" && payment.VerificationStatus === "VERIFIED") {
-        await connection.commit();
+        await connection.query("COMMIT");
         return res.status(200).json({ success: true, message: "Payment already verified.", alreadyVerified: true });
       }
 
@@ -170,7 +170,7 @@ export async function verifyPayment(req, res, next) {
           VerificationStatus: "FAILED",
           FailureReason: "Razorpay order ID does not match the booking request.",
         });
-        await connection.commit();
+        await connection.query("COMMIT");
         return res.status(400).json({ success: false, message: "Razorpay order ID does not match this booking." });
       }
 
@@ -184,7 +184,7 @@ export async function verifyPayment(req, res, next) {
           VerificationStatus: "FAILED",
           FailureReason: "Invalid Razorpay signature.",
         });
-        await connection.commit();
+        await connection.query("COMMIT");
         return res.status(400).json({ success: false, message: "Payment verification failed: invalid Razorpay signature." });
       }
 
@@ -197,7 +197,7 @@ export async function verifyPayment(req, res, next) {
           VerificationStatus: "FAILED",
           FailureReason: "Booking hold has expired or is no longer valid.",
         });
-        await connection.rollback();
+        await connection.query("ROLLBACK");
         return res.status(409).json({ success: false, message: "This booking hold has expired before payment verification." });
       }
 
@@ -211,7 +211,7 @@ export async function verifyPayment(req, res, next) {
           PaymentStatus: "SUCCESS",
           VerificationStatus: "VERIFIED",
         });
-        await connection.commit();
+        await connection.query("COMMIT");
         return res.status(200).json({ success: true, message: "This booking was already confirmed. Payment verification was accepted as idempotent.", alreadyVerified: true });
       }
 
@@ -229,7 +229,7 @@ export async function verifyPayment(req, res, next) {
         VerificationStatus: "VERIFIED",
       });
 
-      await connection.commit();
+      await connection.query("COMMIT");
 
       let emailNotifications = [];
       try {
@@ -245,7 +245,7 @@ export async function verifyPayment(req, res, next) {
         emailNotifications: emailNotifications.map(({ recipientType, status }) => ({ recipientType, status })),
       });
     } catch (error) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       throw error;
     } finally {
       connection.release();

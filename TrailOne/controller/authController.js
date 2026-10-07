@@ -8,7 +8,7 @@ import { sendAccessCode } from "../service/emailService.js";
 
 const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const emailOf = (email) => String(email || "").trim().toLowerCase();
-const tokenFor = (c) => jwt.sign({ customerId: c.CustomerId, email: c.Email, name: c.FullName }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "30m" });
+const tokenFor = (c) => jwt.sign({ customerId: Number(c.CustomerId), email: c.Email, name: c.FullName }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || "30m" });
 
 /** POST /api/auth/request-code - creates and emails a short-lived verification code. */
 export async function requestCode(req, res, next) {
@@ -52,10 +52,10 @@ export async function verifyCode(req, res, next) {
       return res.status(400).json({ success: false, 
                                     message: "Incorrect verification code." });
 
-    const connection = await pool.getConnection();
+    const connection = await pool.connect();
     try {
 
-      await connection.beginTransaction();
+      await connection.query("BEGIN");
       let customer = await findByEmailForUpdate(connection, email);
 
       if (customer) { 
@@ -77,7 +77,7 @@ export async function verifyCode(req, res, next) {
       }
 
       await deleteVerification(connection, verification.requestId); 
-      await connection.commit();
+      await connection.query("COMMIT");
 
       return res.json({ success: true, 
                         token: tokenFor(customer), 
@@ -86,7 +86,7 @@ export async function verifyCode(req, res, next) {
                                     email: customer.Email } 
                       });
     } catch (error) { 
-      await connection.rollback(); 
+      await connection.query("ROLLBACK");
       throw error; 
     } finally { 
       connection.release(); 

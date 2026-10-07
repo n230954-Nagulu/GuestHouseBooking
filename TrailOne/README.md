@@ -1,6 +1,6 @@
 # RGUKT Nuzvid Guest Room Booking API
 
-Node.js and MySQL backend for the college guest-room booking page. The API verifies a guest by email, issues a JWT, provides live room availability, creates temporary holds, and confirms bookings only after server-side Razorpay payment verification.
+Node.js and PostgreSQL backend for the college guest-room booking page. The API verifies a guest by email, issues a JWT, provides live room availability, creates temporary holds, and confirms bookings only after server-side Razorpay payment verification.
 
 ## Project structure
 
@@ -9,27 +9,29 @@ Node.js and MySQL backend for the college guest-room booking page. The API verif
 | `config/` | Database and email-provider configuration. |
 | `controller/` | HTTP request validation and API responses. |
 | `router/` | Maps public URLs to controller functions. |
-| `repository/` | All MySQL queries and transactions. |
+| `repository/` | All PostgreSQL queries and transactions. |
 | `middleware/` | JWT verification, errors, and request protection. |
 | `service/` | Email message construction and delivery. |
 | `database/` | SQL required by this API. |
 
 ## Setup
 
-1. Create `hotel_booking` and import [`database/full_schema.sql`](database/full_schema.sql) for a fresh installation. Read the root [`DEPLOYMENT.md`](../DEPLOYMENT.md) before applying schema changes to an existing database.
+1. Create a PostgreSQL database named `hotel_booking` and set its connection URL as `DATABASE_URL`. Import [`database/full_schema.sql`](database/full_schema.sql) for a fresh installation. Read the root [`DEPLOYMENT.md`](../DEPLOYMENT.md) before applying schema changes to an existing database.
 2. Create `.env` from `.env.example` and set the database, JWT, email, CORS, and Razorpay values.
 3. Run `npm ci`, then `npm start` for production or `npm run dev` during development.
 
 ```env
-# Existing values: PORT, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET
-
-<com>
-
+DATABASE_URL=postgresql://user:password@localhost:5432/hotel_booking
+PGSSL=false
+JWT_SECRET=replace_with_a_long_random_value
 HOLD_MINUTES=10
 JWT_EXPIRES_IN=30m
 ROOM_PRICE_PER_DAY=300
 CORS_ORIGINS=https://rguktn.ac.in,https://your-college-booking-page.example
 ```
+
+Set `PGSSL=true` when the PostgreSQL provider requires TLS. Local PostgreSQL
+connections can use `PGSSL=false`.
 
 Use a Gmail **App Password**, not the normal Gmail password. `CORS_ORIGINS` must contain the exact frontend origins, including `http://localhost:5173` or `http://localhost:8443` for local development.
 

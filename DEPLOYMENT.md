@@ -9,17 +9,23 @@ GuestRoom_Booking/
 └── render.yaml            Render Blueprint for both services
 ```
 
-The API requires an externally hosted MySQL database. Render does not provide
-a managed MySQL service in this setup.
+The API uses PostgreSQL. The Render Blueprint provisions a PostgreSQL
+database alongside the API and frontend.
 
 ## Local setup
 
 Prerequisites: Node.js 22 (or a compatible current LTS release), npm, and a
-MySQL database.
+PostgreSQL server/client.
 
-1. Create `TrailOne/.env` from `TrailOne/.env.example` and provide local
-   database, JWT, email, and Razorpay test settings.
-2. Install and start the API:
+1. Create the `hotel_booking` PostgreSQL database. Create `TrailOne/.env` from
+   `TrailOne/.env.example`, set `DATABASE_URL` and `JWT_SECRET`, and provide
+   email/Razorpay test settings as required.
+2. From the repository root, initialize the database:
+
+   ```sh
+   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f TrailOne/database/full_schema.sql
+   ```
+3. Install and start the API:
 
    ```sh
    cd TrailOne
@@ -29,7 +35,7 @@ MySQL database.
 
    The API listens on `http://localhost:5000`; its health route is
    `http://localhost:5000/health`.
-3. In another terminal, install and start the frontend:
+4. In another terminal, install and start the frontend:
 
    ```sh
    cd Guest-House-Booking
@@ -50,13 +56,8 @@ Never commit `.env` files or put backend secrets in `VITE_*` variables.
 | --- | --- | --- |
 | `NODE_ENV` | Production | Set to `production` on Render. |
 | `PORT` | No | Render supplies this automatically; local default is `5000`. |
-| `DB_HOST` | Yes | External MySQL hostname. |
-| `DB_PORT` | No | MySQL port; defaults to `3306`. |
-| `DB_USER` | Yes | MySQL username. |
-| `DB_PASSWORD` | Yes | MySQL password. |
-| `DB_NAME` | Yes | MySQL database/schema name. |
-| `DB_SSL` | No | Set to `true` when the database provider requires TLS. |
-| `DB_SSL_CA` | No | Optional PEM CA certificate when required by the provider. |
+| `DATABASE_URL` | Yes | PostgreSQL connection URL. Render can inject this from its PostgreSQL service. |
+| `PGSSL` | No | Set to `true` when the PostgreSQL provider requires TLS; Render Blueprint enables it. TLS certificate validation remains enabled. |
 | `DB_CONNECTION_LIMIT` | No | Pool size; defaults to `10`. |
 | `JWT_SECRET` | Yes | Long, random signing secret; do not reuse a sample value. |
 | `JWT_EXPIRES_IN` | No | Token lifetime; defaults to `30m`. |
@@ -74,39 +75,33 @@ The API also accepts `http://localhost:5173` and `http://localhost:8443` as
 CORS origins outside production. In production it allows only the configured
 `CORS_ORIGINS` and optional `FRONTEND_URL` values.
 
-## MySQL setup and schema
+## PostgreSQL setup and schema
 
-Provision a reachable MySQL database with a user authorized to create a
-database and modify its tables. The supplied fresh-install schema creates and
-uses a database named `hotel_booking`; set `DB_NAME=hotel_booking`. Configure
-`DB_HOST`, `DB_PORT`, `DB_USER`, and `DB_PASSWORD` from the provider. Enable
-`DB_SSL=true` when required; supply its CA certificate in `DB_SSL_CA` if the
-provider's TLS certificate is not trusted by the host.
-
-For a **new, empty database server**, import the fresh-install schema once:
+Provision a reachable PostgreSQL database named `hotel_booking`. Set
+`DATABASE_URL` to its connection URL; never place that URL in frontend
+environment variables. Local PostgreSQL can use:
 
 ```sh
-mysql --host="$DB_HOST" --port="${DB_PORT:-3306}" --user="$DB_USER" \
-  --password < TrailOne/database/full_schema.sql
+DATABASE_URL=postgresql://user:password@localhost:5432/hotel_booking
 ```
 
-`full_schema.sql` creates the `hotel_booking` database and its tables. It does
-not drop an existing database. Do not rerun it over a database with existing
-tables; take a backup and use a deliberate migration for existing data.
-
-`schema-adjustments.sql` is for an older database created from the original
-schema. Apply it only once, after verifying which columns/tables are missing;
-it contains non-idempotent `ALTER TABLE` statements and should not be run after
-the current full schema:
+For a **new, empty PostgreSQL database**, apply the schema once from the
+repository root:
 
 ```sh
-mysql --host="$DB_HOST" --port="${DB_PORT:-3306}" --user="$DB_USER" \
-  --password --database=hotel_booking < TrailOne/database/schema-adjustments.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f TrailOne/database/full_schema.sql
 ```
 
-Use the database provider's secure SQL console or import facility if it does
-not permit direct MySQL CLI connections. The CLI prompts for the password;
-do not put it in a command argument or commit database credentials.
+The schema creates the tables and seed room records in the selected database;
+it does not create or drop the database itself. Do not rerun it over populated
+tables. `schema-adjustments.sql` is only for an older PostgreSQL schema and
+should be applied after a backup after reviewing the target schema.
+
+This changes the application database driver/schema, not existing MySQL data.
+Existing data must be exported from MySQL and imported into PostgreSQL with
+the target column types and quoted mixed-case names accounted for. Back up
+the source and verify migrated row counts/relationships before switching
+`DATABASE_URL`; do not run the PostgreSQL scripts against a MySQL server.
 
 ## Razorpay and email
 
@@ -146,16 +141,22 @@ unknown frontend paths to `index.html`, allowing refresh/direct navigation.
 - **Build Command:** `npm ci --omit=dev`
 - **Start Command:** `npm start`
 - **Health Check Path:** `/health`
+- **Database:** `guest-house-booking-db` PostgreSQL, connected to the API as `DATABASE_URL`
 
 Set all required backend variables above in the Render service. `CORS_ORIGINS`
 must contain the exact deployed static-site origin, for example
 `https://<your-frontend-service>.onrender.com`. You may add additional trusted
 origins as a comma-separated list. Do not use `*` for production.
 
+The Blueprint currently selects Render's free PostgreSQL plan for testing.
+Free databases have limited lifetime/availability and are not suitable for
+durable production bookings; select an appropriate paid database plan before
+relying on this service for production data.
+
 ## Post-deployment checks
 
 1. Open `https://<your-api-service>.onrender.com/health`. A healthy response
-   includes `{"success":true,...}`; the route also checks the MySQL connection.
+   includes `{"success":true,...}`; the route also checks the PostgreSQL connection.
 2. Load the frontend and confirm the browser can retrieve available rooms
    from the API without CORS errors.
 3. Test login/code verification and a booking hold.

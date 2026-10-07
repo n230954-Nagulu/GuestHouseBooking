@@ -1,32 +1,24 @@
-import mysql from "mysql2/promise";
+import pg from "pg";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const requiredVariables = ["DB_HOST", "DB_USER", "DB_NAME"];
-const missingVariables = requiredVariables.filter((name) => !process.env[name]);
-if (process.env.DB_PASSWORD === undefined) missingVariables.push("DB_PASSWORD");
-if (missingVariables.length) {
-  throw new Error(`Missing required database environment variables: ${missingVariables.join(", ")}`);
+const { Pool } = pg;
+
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL must be set in the environment.");
 }
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  ssl: process.env.DB_SSL === "true"
-    ? {
-        rejectUnauthorized: true,
-        ca: process.env.DB_SSL_CA || undefined,
-      }
-    : undefined,
-  waitForConnections: true,
-  connectionLimit: Number(process.env.DB_CONNECTION_LIMIT || 10),
-  queueLimit: 0,
-  timezone: "Z"
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.PGSSL === "true" ? true : undefined,
+  max: Number(process.env.DB_CONNECTION_LIMIT || 10),
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 10_000,
 });
 
+pool.on("error", (error) => {
+  console.error("Unexpected idle PostgreSQL client error:", error);
+});
 
 export default pool;

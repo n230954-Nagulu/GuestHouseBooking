@@ -39,10 +39,10 @@ export async function createHold(req, res, next) {
   if (!validDates(inDate, outDate) || !roomIds)
     return res.status(400).json({ success: false, message: "Provide valid dates and at least one room ID." });
 
-  const connection = await pool.getConnection();
+  const connection = await pool.connect();
 
   try {
-    await connection.beginTransaction();
+    await connection.query("BEGIN");
     await expireHolds(connection);
     await lockSelectedRooms(connection, roomIds);
 
@@ -51,7 +51,7 @@ export async function createHold(req, res, next) {
     const unavailableRoomIds = roomIds.filter((id) => !ids.has(id));
 
     if (unavailableRoomIds.length) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(409).json({
         success: false,
         message: "Selected rooms are no longer available.",
@@ -67,7 +67,7 @@ export async function createHold(req, res, next) {
       roomIds,
     });
 
-    await connection.commit();
+    await connection.query("COMMIT");
 
     const details = await holdDetails(hold.requestId, customerId);
     const pricing = bookingPrice(details.rooms.length, inDate, outDate);
@@ -96,7 +96,7 @@ export async function createHold(req, res, next) {
       },
     });
   } catch (error) {
-    await connection.rollback();
+    await connection.query("ROLLBACK");
     return next(error);
   } finally {
     connection.release();
@@ -128,13 +128,13 @@ export async function confirmDemoBooking(req, res, next) {
 
   let connection;
   try {
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
+    connection = await pool.connect();
+    await connection.query("BEGIN");
     await expireHolds(connection);
 
     const request = await findHoldForCustomer(connection, requestId, req.user.customerId);
     if (!request) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(404).json({ success: false, message: "Booking request was not found for this customer." });
     }
 
@@ -144,7 +144,7 @@ export async function confirmDemoBooking(req, res, next) {
       if (demoPayment && existingBooking.BookingStatus === "CONFIRMED") {
         const existingDetails = await bookingDetails(existingBooking.BookingId, connection);
         const existingPricing = bookingPrice(existingDetails.rooms.length, existingDetails.InDate, existingDetails.OutDate);
-        await connection.commit();
+        await connection.query("COMMIT");
         return res.status(200).json({
           success: true,
           message: "Demo booking was already confirmed.",
@@ -154,32 +154,32 @@ export async function confirmDemoBooking(req, res, next) {
           emailNotifications: [],
         });
       }
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "This booking request has already been confirmed using another payment method." });
     }
 
     const existingPayment = await findPaymentByRequestId(connection, requestId);
     if (existingPayment?.PaymentMethod === "RAZORPAY") {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "A Razorpay payment attempt already exists for this hold. Complete that payment or start a new booking to use demo mode." });
     }
 
     if (request.RequestStatus !== "HOLD" || new Date(request.ExpiresAt) <= new Date()) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(409).json({ success: false, message: "This booking hold has expired or is no longer available." });
     }
     if (!validDates(request.InDate, request.OutDate)) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "The booking dates are invalid." });
     }
 
     const details = await holdDetails(requestId, req.user.customerId, connection);
     if (!details || details.FullName?.trim().length < 2 || !validEmail.test(details.Email || "") || !details.Phone?.trim()) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "Verified occupant name, email, and phone details are required." });
     }
     if (!details.rooms?.length) {
-      await connection.rollback();
+      await connection.query("ROLLBACK");
       return res.status(400).json({ success: false, message: "At least one room must be selected before confirming the booking." });
     }
 
@@ -200,7 +200,7 @@ export async function confirmDemoBooking(req, res, next) {
       failureReason: "Demo booking: payment was not processed through Razorpay.",
     });
     const bookingDetailsResult = await bookingDetails(booking.bookingId, connection);
-    await connection.commit();
+    await connection.query("COMMIT");
 
     let emailNotifications = [];
     try {
@@ -226,7 +226,7 @@ export async function confirmDemoBooking(req, res, next) {
       emailNotifications: emailNotifications.map(({ recipientType, status }) => ({ recipientType, status })),
     });
   } catch (error) {
-    if (connection) await connection.rollback();
+    if (connection) await connection.query("ROLLBACK");
     return next(error);
   } finally {
     connection?.release();
