@@ -3,7 +3,7 @@ import logo  from '../Assets/icons/logo.png'
 import guetsHouse from '../Assets/images/guestHouse.jpg'
 import { useRef } from 'react'
 import Login from './pages/login.tsx'
-import { confirmBooking, createBookingHold, createPaymentOrder, getAvailableRooms, type BookingHold, type EmailNotification, type Session, verifyPayment } from './api'
+import { confirmDemoBooking, createBookingHold, createPaymentOrder, getAvailableRooms, type Booking, type BookingHold, type EmailNotification, type Session, verifyPayment } from './api'
 
 declare global {
   interface Window {
@@ -132,6 +132,21 @@ function formatINR(amount: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount)
 }
 
+function dateInputValue(daysFromToday: number) {
+  const date = new Date()
+  date.setHours(12, 0, 0, 0)
+  date.setDate(date.getDate() + daysFromToday)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function formatBookingDate(value: string) {
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
+  return new Date(year, month - 1, day).toDateString()
+}
+
 function RoomCell({
   room,
   onClick,
@@ -192,8 +207,8 @@ export default function App() {
   const checkInDate = useRef<HTMLInputElement>(null)
   const [showLogin, setShowLogin] = useState(false)
   const [step, setStep] = useState<Step>('landing')
-  const [checkIn, setCheckIn] = useState('2026-08-20')
-  const [checkOut, setCheckOut] = useState('2026-08-22')
+  const [checkIn, setCheckIn] = useState(() => dateInputValue(1))
+  const [checkOut, setCheckOut] = useState(() => dateInputValue(3))
   const [guests, setGuests] = useState(2)
   const [selectedFloorId, setSelectedFloorId] = useState<number>(0)
   const [floors, setFloors] = useState<Floor[]>(FLOORS)
@@ -202,9 +217,10 @@ export default function App() {
   const [heldBooking, setHeldBooking] = useState<BookingHold['bookingRequest'] | null>(null)
   const [facultyInChargeName, setFacultyInChargeName] = useState('')
   const [facultyInChargeEmail, setFacultyInChargeEmail] = useState('')
-  const [facultyError, setFacultyError] = useState('')
   const [confirmationError, setConfirmationError] = useState('')
   const [emailNotice, setEmailNotice] = useState('')
+  const [confirmedBooking, setConfirmedBooking] = useState<Booking | null>(null)
+  const [paymentMode, setPaymentMode] = useState<'DEMO' | 'RAZORPAY' | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [availabilityError, setAvailabilityError] = useState('')
   const [isLoadingRooms, setIsLoadingRooms] = useState(false)
@@ -288,19 +304,23 @@ export default function App() {
   }
 
   async function createHoldAfterVerification(verifiedSession: Session) {
+    if (!validBookingSelection()) {
+      setShowLogin(false)
+      return
+    }
     const { bookingRequest } = await createBookingHold(
       verifiedSession,
       checkIn,
       checkOut,
       allSelectedRooms.map((room) => room.id),
-      facultyInChargeName.trim(),
-      facultyInChargeEmail.trim(),
     )
     setSession(verifiedSession)
     setHeldBooking(bookingRequest)
     setShowLogin(false)
     setBookingDone(false)
     setEmailNotice('')
+    setConfirmedBooking(null)
+    setPaymentMode(null)
     setStep('confirmation')
   }
 
@@ -317,26 +337,45 @@ export default function App() {
       return `Booking confirmed, but email sending failed for: ${[...new Set(failedTypes)].join(' and ')}. Check the backend logs.`
     }
 
-    return 'Booking confirmed. The mail server accepted the confirmation emails for the guest and faculty.'
+    return 'Booking confirmed. The mail server accepted the confirmation notifications.'
+  }
+
+  function validBookingSelection() {
+    if (!checkIn || !checkOut || checkOut <= checkIn) {
+      setAvailabilityError('Choose a valid check-in and check-out date.')
+      setStep('selector')
+      return false
+    }
+    if (!allSelectedRooms.length) {
+      setAvailabilityError('Select at least one available room.')
+      setStep('selector')
+      return false
+    }
+    setAvailabilityError('')
+    return true
+  }
+
+  function validateFacultyDetails() {
+    if (facultyInChargeName.trim().length < 2 || facultyInChargeName.trim().length > 120) {
+      setConfirmationError('Enter the faculty in-charge name (2 to 120 characters).')
+      return false
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facultyInChargeEmail.trim())) {
+      setConfirmationError('Enter a valid faculty in-charge email address.')
+      return false
+    }
+    setConfirmationError('')
+    return true
   }
 
   function beginBooking() {
-    const email = facultyInChargeEmail.trim()
-    if (facultyInChargeName.trim().length < 2) {
-      setFacultyError('Enter the faculty in-charge name.')
-      return
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setFacultyError('Enter a valid faculty email address.')
-      return
-    }
-    setFacultyError('')
+    if (!validBookingSelection()) return
     setShowLogin(true)
   }
 
   async function submitBooking() {
     if (!session || !heldBooking) return
-    setConfirmationError('')
+    if (!validateFacultyDetails()) return
     setIsSubmitting(true)
 
     try {
@@ -345,7 +384,12 @@ export default function App() {
         throw new Error('Razorpay checkout could not be loaded. Please try again.')
       }
 
-      const { order } = await createPaymentOrder(session, heldBooking.requestId)
+      const { order } = await createPaymentOrder(
+        session,
+        heldBooking.requestId,
+        facultyInChargeName.trim(),
+        facultyInChargeEmail.trim(),
+      )
       const razorpay = new window.Razorpay({
         key: order.keyId,
         amount: order.amount,
@@ -358,6 +402,8 @@ export default function App() {
           try {
             const result = await verifyPayment(session, heldBooking.requestId, response)
             setEmailNotice(describeEmailNotifications(result.emailNotifications))
+            setConfirmedBooking(result.booking ?? null)
+            setPaymentMode('RAZORPAY')
             setBookingDone(true)
           } catch (error) {
             setConfirmationError(error instanceof Error ? error.message : 'Payment verification failed. Your booking has not been confirmed.')
@@ -385,15 +431,22 @@ export default function App() {
 
   async function submitDemoBooking() {
     if (!session || !heldBooking) return
-    setConfirmationError('')
+    if (!validBookingSelection() || !validateFacultyDetails()) return
     setIsSubmitting(true)
-
+    setConfirmationError('')
     try {
-      const result = await confirmBooking(session, heldBooking.requestId)
+      const result = await confirmDemoBooking(
+        session,
+        heldBooking.requestId,
+        facultyInChargeName.trim(),
+        facultyInChargeEmail.trim(),
+      )
+      setConfirmedBooking(result.booking)
+      setPaymentMode('DEMO')
       setEmailNotice(describeEmailNotifications(result.emailNotifications))
       setBookingDone(true)
     } catch (error) {
-      setConfirmationError(error instanceof Error ? error.message : 'Demo booking failed.')
+      setConfirmationError(error instanceof Error ? error.message : 'Demo booking could not be confirmed.')
     } finally {
       setIsSubmitting(false)
     }
@@ -648,34 +701,70 @@ export default function App() {
             className="text-[#1E7799] text-xs tracking-[0.25em] uppercase mb-3"
             style={{ fontFamily: "'JetBrains Mono', monospace" }}
           >
-            {bookingDone ? 'Booking Confirmed' : 'Booking Hold Created'}
+            {bookingDone ? paymentMode === 'DEMO' ? 'Booking Confirmed — Demo Mode' : 'Booking Confirmed' : 'Booking Hold Created'}
           </p>
           <h2 className="text-black text-3xl font-light mb-2">{bookingDone ? "You're all set." : 'Review your booking.'}</h2>
           <p className="text-black/70 text-sm mb-8">
             {bookingDone
-              ? emailNotice || 'Booking confirmed.'
-              : 'Your rooms are temporarily held. Submit the booking to confirm it and receive your email confirmation.'}
+              ? paymentMode === 'DEMO'
+                ? 'Your booking has been recorded successfully for demonstration purposes. Payment was not processed through Razorpay.'
+                : emailNotice || 'Booking confirmed.'
+              : 'Your rooms are temporarily held. Review the booking details and choose a confirmation option.'}
           </p>
+
+          {bookingDone && paymentMode === 'DEMO' && (
+            <p className="w-full rounded-lg bg-amber-100 px-4 py-3 mb-5 text-sm font-semibold text-amber-900">
+              Demo Booking — Payment not processed through Razorpay
+            </p>
+          )}
+
+          <div
+            className="w-full rounded-xl p-5 mb-5 text-left"
+            style={{ background: '#f7f7f7', border: '1px solid rgba(0,0,0,0.08)' }}
+          >
+            <h3 className="text-black font-semibold mb-3">Faculty In-Charge Details</h3>
+            <p className="text-sm text-black/70">
+              {confirmedBooking?.FacultyInChargeName || facultyInChargeName} · {confirmedBooking?.FacultyInChargeEmail || facultyInChargeEmail}
+            </p>
+          </div>
 
           <div
             className="w-full rounded-xl p-5 mb-6 text-left"
             style={{ background: '#f7f7f7', border: '1px solid rgba(255,255,255,0.06)' }}
           >
             <div className="grid grid-cols-2 gap-y-3 text-sm">
+              {confirmedBooking?.BookingReference && (
+                <>
+                  <span className="text-black/70">Booking Reference</span>
+                  <span className="text-black text-right font-semibold">{confirmedBooking.BookingReference}</span>
+                </>
+              )}
               <span className="text-black/70">Hotel</span>
               <span className="text-black text-right">The RGUKT, Nuzvid</span>
+              {confirmedBooking?.FullName && (
+                <>
+                  <span className="text-black/70">Occupant</span>
+                  <span className="text-black text-right">{confirmedBooking.FullName}</span>
+                  <span className="text-black/70">Occupant Email</span>
+                  <span className="text-black text-right break-all">{confirmedBooking.Email}</span>
+                </>
+              )}
               <span className="text-black/70">Check In</span>
-              <span className="text-black text-right">{new Date(checkIn).toDateString()}</span>
+              <span className="text-black text-right">{formatBookingDate(checkIn)}</span>
               <span className="text-black/70">Check Out</span>
-              <span className="text-black text-right">{new Date(checkOut).toDateString()}</span>
+              <span className="text-black text-right">{formatBookingDate(checkOut)}</span>
               <span className="text-black/70">Guests</span>
               <span className="text-black text-right">{guests}</span>
               <span className="text-black/70">Rooms</span>
-              <span className="text-black text-right">{summaryRooms.join(', ')}</span>
-              <span className="text-black/70">Faculty In-Charge</span>
-              <span className="text-black text-right">{heldBooking?.facultyInChargeName}</span>
-              <span className="text-black/70">Faculty Email</span>
-              <span className="text-black text-right break-all">{heldBooking?.facultyInChargeEmail}</span>
+              <span className="text-black text-right">{confirmedBooking?.rooms?.map((room) => room.RoomNo).join(', ') || summaryRooms.join(', ')}</span>
+              {bookingDone && (
+                <>
+                  <span className="text-black/70">Payment</span>
+                  <span className="text-black text-right">
+                    {paymentMode === 'DEMO' ? 'Demo — not processed' : 'Razorpay — verified'}
+                  </span>
+                </>
+              )}
               <div className="col-span-2 h-px bg-black/5 my-1" />
               <span className="text-[#1E7799] font-semibold">Total</span>
               <span className="text-[#1E7799] font-semibold text-right">
@@ -692,7 +781,11 @@ export default function App() {
                 setStep('landing')
                 setBookingDone(false)
                 setHeldBooking(null)
+                setConfirmedBooking(null)
+                setPaymentMode(null)
                 setSession(null)
+                setFacultyInChargeName('')
+                setFacultyInChargeEmail('')
                 setFloors(FLOORS)
               }}
               className="text-black/70 text-sm hover:text-white transition-colors"
@@ -700,10 +793,10 @@ export default function App() {
               ← Back to Home
             </button>
           ) : (
-            <div className="flex w-full gap-3">
+            <div className="flex w-full flex-col sm:flex-row gap-3">
               <button
                 onClick={submitBooking}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !session || !heldBooking}
                 className="flex-1 rounded-xl px-5 py-3 font-semibold text-sm text-white transition-all disabled:opacity-60"
                 style={{ background: '#2c36cc' }}
               >
@@ -711,11 +804,11 @@ export default function App() {
               </button>
               <button
                 onClick={submitDemoBooking}
-                disabled={isSubmitting}
+                disabled={isSubmitting || !session || !heldBooking}
                 className="flex-1 rounded-xl px-5 py-3 font-semibold text-sm text-black transition-all disabled:opacity-60"
                 style={{ background: '#d8d8d8' }}
               >
-                {isSubmitting ? 'Booking…' : 'Book without payment'}
+                {isSubmitting ? 'Confirming…' : 'Confirm Booking (Demo)'}
               </button>
             </div>
           )}
@@ -976,46 +1069,28 @@ export default function App() {
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_1fr_auto] gap-3">
-              <label className="text-xs text-white/60">
-                Faculty In-Charge Name
-                <input
-                  value={facultyInChargeName}
-                  onChange={(event) => setFacultyInChargeName(event.target.value)}
-                  autoComplete="name"
-                  placeholder="Full name"
-                  className="mt-1 w-full rounded-lg border border-white/15 bg-white px-3 py-2.5 text-sm text-black outline-none focus:border-[#c9a96e]"
-                />
-              </label>
-              <label className="text-xs text-white/60">
-                Faculty Email
-                <input
-                  type="email"
-                  value={facultyInChargeEmail}
-                  onChange={(event) => setFacultyInChargeEmail(event.target.value)}
-                  autoComplete="email"
-                  placeholder="faculty@example.edu"
-                  className="mt-1 w-full rounded-lg border border-white/15 bg-white px-3 py-2.5 text-sm text-black outline-none focus:border-[#c9a96e]"
-                />
-              </label>
+            <div className="mt-4 flex justify-end">
               <button
                 onClick={beginBooking}
                 className="self-end flex items-center justify-center gap-2 px-7 py-3 rounded-xl font-semibold text-sm transition-all duration-200 hover:shadow-[0_0_20px_#1e1799] active:scale-95 cursor-pointer"
                 style={{ background: '#2c36cc', color: '#f8f5f5' }}
               >
-                Confirm Booking
+                Continue to booking details
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                   <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </button>
             </div>
-            {facultyError && <p role="alert" className="mt-2 text-sm text-red-300">{facultyError}</p>}
           </div>
         </div>
       )}
       {showLogin && (
         <Login
           onLoginSuccess={createHoldAfterVerification}
+          facultyInChargeName={facultyInChargeName}
+          facultyInChargeEmail={facultyInChargeEmail}
+          onFacultyInChargeNameChange={setFacultyInChargeName}
+          onFacultyInChargeEmailChange={setFacultyInChargeEmail}
         />
       )}
     </div>

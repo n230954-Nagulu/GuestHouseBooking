@@ -9,6 +9,15 @@ export async function findPaymentByRequestId(connection, requestId) {
   return rows[0] || null;
 }
 
+export async function findDemoPaymentByRequestId(connection, requestId) {
+  const [rows] = await connection.execute(
+    "SELECT * FROM payments WHERE RequestId = ? AND PaymentMethod = 'DEMO' ORDER BY PaymentId DESC LIMIT 1 FOR UPDATE",
+    [requestId]
+  );
+
+  return rows[0] || null;
+}
+
 export async function findPaymentByOrderId(connection, razorpayOrderId) {
   const [rows] = await connection.execute(
     "SELECT * FROM payments WHERE RazorpayOrderId = ? LIMIT 1 FOR UPDATE",

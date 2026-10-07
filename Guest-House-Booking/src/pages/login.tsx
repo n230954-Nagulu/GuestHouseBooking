@@ -3,9 +3,19 @@ import logo  from '../../Assets/icons/logo.png'
 import { requestCode, type Session, verifyCode } from "../api";
 interface LoginProps {
   onLoginSuccess?: (session: Session) => Promise<void> | void;
+  facultyInChargeName: string;
+  facultyInChargeEmail: string;
+  onFacultyInChargeNameChange: (value: string) => void;
+  onFacultyInChargeEmailChange: (value: string) => void;
 }
 
-export default function Login({ onLoginSuccess }: LoginProps) {
+export default function Login({
+  onLoginSuccess,
+  facultyInChargeName,
+  facultyInChargeEmail,
+  onFacultyInChargeNameChange,
+  onFacultyInChargeEmailChange,
+}: LoginProps) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
@@ -29,7 +39,18 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   }, []);
 
   async function handleSendCode() {
-    if (!email || !name || !mobile) return;
+    if (!name.trim() || !email.trim() || !mobile.trim()) {
+      setError("Enter your name, mobile number, and email address.");
+      return;
+    }
+    if (facultyInChargeName.trim().length < 2 || facultyInChargeName.trim().length > 120) {
+      setError("Enter the faculty in-charge name (2 to 120 characters).");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facultyInChargeEmail.trim())) {
+      setError("Enter a valid faculty in-charge email address.");
+      return;
+    }
     setError("");
     setIsSending(true);
     try {
@@ -46,6 +67,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   e.preventDefault();
 
   if (!email || !codeSent || !code) {
+    return;
+  }
+  if (facultyInChargeName.trim().length < 2 || facultyInChargeName.trim().length > 120) {
+    setError("Enter the faculty in-charge name (2 to 120 characters).");
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facultyInChargeEmail.trim())) {
+    setError("Enter a valid faculty in-charge email address.");
     return;
   }
 
@@ -78,6 +107,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       <div
         style={{
             maxWidth: "400px",
+            maxHeight: "90vh",
+            overflowY: "auto",
             backgroundColor: "#ffffff",
             border: "1px solid #a9c5e6",
             borderRadius: "10px",
@@ -253,6 +284,75 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 A verification code has been sent to your email.
               </p>
             )}
+          </div>
+          <p style={{ fontSize: "0.82rem", fontWeight: 600, color: "#244f77", margin: "0.25rem 0 -0.35rem" }}>
+            Faculty In-Charge Details
+          </p>
+          <div>
+            <label
+              htmlFor="faculty-in-charge-name"
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                fontWeight: 500,
+                color: "#244f77",
+                marginBottom: "6px",
+              }}
+            >
+              Faculty In-Charge Name
+            </label>
+            <input
+              id="faculty-in-charge-name"
+              type="text"
+              value={facultyInChargeName}
+              onChange={(event) => onFacultyInChargeNameChange(event.target.value)}
+              placeholder="Enter faculty name"
+              maxLength={120}
+              required
+              style={{
+                width: "100%",
+                border: "1px solid #c8d4de",
+                borderRadius: "6px",
+                padding: "0.55rem 0.75rem",
+                fontSize: "0.875rem",
+                color: "#1e2d3d",
+                backgroundColor: "#ffffff",
+                outline: "none",
+              }}
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="faculty-in-charge-email"
+              style={{
+                display: "block",
+                fontSize: "0.8rem",
+                fontWeight: 500,
+                color: "#244f77",
+                marginBottom: "6px",
+              }}
+            >
+              Faculty In-Charge Email
+            </label>
+            <input
+              id="faculty-in-charge-email"
+              type="email"
+              value={facultyInChargeEmail}
+              onChange={(event) => onFacultyInChargeEmailChange(event.target.value)}
+              placeholder="faculty@example.edu"
+              maxLength={254}
+              required
+              style={{
+                width: "100%",
+                border: "1px solid #c8d4de",
+                borderRadius: "6px",
+                padding: "0.55rem 0.75rem",
+                fontSize: "0.875rem",
+                color: "#1e2d3d",
+                backgroundColor: "#ffffff",
+                outline: "none",
+              }}
+            />
           </div>
 
           {/* Verification code */}

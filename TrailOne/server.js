@@ -8,11 +8,17 @@ import bookingRouter from "./router/bookingRouter.js";
 import paymentRouter from "./router/paymentRouter.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
-if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET must be set in .env");
+if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET must be set in the environment.");
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,http://localhost:8443")
-  .split(",")
+const configuredOrigins = [
+  ...(process.env.CORS_ORIGINS || "").split(","),
+  process.env.FRONTEND_URL || "",
+];
+const localOrigins = process.env.NODE_ENV === "production"
+  ? []
+  : ["http://localhost:5173", "http://localhost:8443"];
+const allowedOrigins = [...configuredOrigins, ...localOrigins]
   .map((origin) => origin.trim())
   .filter(Boolean);
 
@@ -48,4 +54,4 @@ app.use(notFound);
 app.use(errorHandler);
 
 const port = Number(process.env.PORT || 5000);
-app.listen(port, () => console.log(`Guest room booking API listening on port ${port}`));
+app.listen(port, "0.0.0.0", () => console.log(`Guest room booking API listening on port ${port}`));

@@ -1,4 +1,4 @@
-name: Build and Deploy to GitHub Pages
+name: Validate Guest House Booking
 
 on:
   push:
@@ -7,41 +7,22 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  validate:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./Guest-House-Booking
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Install dependencies and build
+          node-version: 22
+      - name: Build frontend
+        working-directory: Guest-House-Booking
+        env:
+          VITE_API_BASE_URL: https://api.example.invalid/api
         run: |
-          npm install
+          npm ci
           npm run build
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './Guest-House-Booking/dist'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Install backend production dependencies
+        working-directory: TrailOne
+        run: npm ci --omit=dev

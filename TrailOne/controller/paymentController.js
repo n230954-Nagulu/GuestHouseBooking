@@ -1,11 +1,11 @@
 import crypto from "node:crypto";
 import Razorpay from "razorpay";
 import pool from "../config/db.js";
-import { findHoldForCustomer, createBookingFromHold, bookingDetails, findBookingByRequestId, holdDetails, markBookingPaid } from "../repository/bookingRepository.js";
+import { findHoldForCustomer, createBookingFromHold, bookingDetails, findBookingByRequestId, holdDetails, markBookingPaid, updateHoldFacultyInCharge } from "../repository/bookingRepository.js";
 import { createPaymentRecord, findPaymentByOrderId, findPaymentByRequestId, updatePaymentRecord } from "../repository/paymentRepository.js";
 import { expireHolds } from "../repository/roomRepository.js";
 import { bookingPrice } from "../service/pricingService.js";
-import { sendBookingConfirmationEmails as sendPaymentNotificationEmails } from "../service/emailService.js";
+import { sendBookingConfirmationEmails } from "../service/emailService.js";
 
 const razorpayClient = process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET
   ? new Razorpay({
@@ -35,9 +35,14 @@ function normalizeRequestId(value) {
 export async function createPaymentOrder(req, res, next) {
   try {
     const requestId = normalizeRequestId(req.body.requestId);
+    const facultyInChargeName = String(req.body.facultyInChargeName || "").trim();
+    const facultyInChargeEmail = String(req.body.facultyInChargeEmail || "").trim().toLowerCase();
 
     if (!requestId) {
       return res.status(400).json({ success: false, message: "A valid booking request ID is required." });
+    }
+    if (facultyInChargeName.length < 2 || facultyInChargeName.length > 120 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facultyInChargeEmail)) {
+      return res.status(400).json({ success: false, message: "Valid faculty in-charge name and email are required." });
     }
 
     if (!razorpayClient) {
@@ -56,6 +61,10 @@ export async function createPaymentOrder(req, res, next) {
         return res.status(409).json({ success: false, message: "This booking hold is expired or not available for payment." });
       }
 
+      await updateHoldFacultyInCharge(connection, requestId, req.user.customerId, facultyInChargeName, facultyInChargeEmail);
+      request.FacultyInChargeName = facultyInChargeName;
+      request.FacultyInChargeEmail = facultyInChargeEmail;
+
       const hold = await holdDetails(requestId, req.user.customerId);
       const pricing = bookingPrice((hold?.rooms || []).length, request.InDate, request.OutDate);
       const amount = Number(pricing.totalAmount || 0);
@@ -66,6 +75,10 @@ export async function createPaymentOrder(req, res, next) {
       }
 
       const existing = await findPaymentByRequestId(connection, requestId);
+      if (existing?.PaymentMethod === "DEMO") {
+        await connection.rollback();
+        return res.status(409).json({ success: false, message: "This booking request is already using demo mode." });
+      }
       const order = await razorpayClient.orders.create({
         amount: Math.round(amount * 100),
         currency: "INR",
@@ -138,6 +151,11 @@ export async function verifyPayment(req, res, next) {
       if (!payment) {
         await connection.rollback();
         return res.status(404).json({ success: false, message: "No payment record exists for this booking request." });
+      }
+
+      if (payment.PaymentMethod !== "RAZORPAY") {
+        await connection.rollback();
+        return res.status(409).json({ success: false, message: "This payment record is not a Razorpay transaction." });
       }
 
       if (payment.PaymentStatus === "SUCCESS" && payment.VerificationStatus === "VERIFIED") {
@@ -215,7 +233,7 @@ export async function verifyPayment(req, res, next) {
 
       let emailNotifications = [];
       try {
-        emailNotifications = await sendPaymentNotificationEmails(bookingWithPricing, request.FacultyInChargeEmail);
+        emailNotifications = await sendBookingConfirmationEmails(bookingWithPricing, request.FacultyInChargeEmail);
       } catch (error) {
         console.error("Post-payment email workflow failed:", error.message);
       }
@@ -235,15 +253,4 @@ export async function verifyPayment(req, res, next) {
   } catch (error) {
     return next(error);
   }
-}
-
-export async function sendBookingConfirmationEmails(booking, paymentInfo = {}) {
-  const finalDetails = {
-    ...booking,
-    ...paymentInfo,
-    PaymentStatus: "SUCCESS",
-    BookingStatus: "CONFIRMED",
-  };
-
-  return sendPaymentNotificationEmails(finalDetails);
 }

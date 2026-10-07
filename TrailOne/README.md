@@ -1,6 +1,6 @@
 # RGUKT Nuzvid Guest Room Booking API
 
-Node.js and MySQL backend for the college guest-room booking page. The API verifies a guest by email, issues a JWT, provides live room availability, creates temporary holds, and confirms bookings.
+Node.js and MySQL backend for the college guest-room booking page. The API verifies a guest by email, issues a JWT, provides live room availability, creates temporary holds, and confirms bookings only after server-side Razorpay payment verification.
 
 ## Project structure
 
@@ -16,14 +16,12 @@ Node.js and MySQL backend for the college guest-room booking page. The API verif
 
 ## Setup
 
-1. Create the original `hotel_db` tables shared earlier.
-2. Run [`database/schema-adjustments.sql`](database/schema-adjustments.sql) once.
-3. Keep the existing database and JWT settings in `.env`.
-4. Add the following email, pricing, and deployment settings to `.env` (use `.env.example` as the template).
-5. Run `npm start` for production or `npm run dev` during development.
+1. Create `hotel_booking` and import [`database/full_schema.sql`](database/full_schema.sql) for a fresh installation. Read the root [`DEPLOYMENT.md`](../DEPLOYMENT.md) before applying schema changes to an existing database.
+2. Create `.env` from `.env.example` and set the database, JWT, email, CORS, and Razorpay values.
+3. Run `npm ci`, then `npm start` for production or `npm run dev` during development.
 
 ```env
-# Existing values: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET
+# Existing values: PORT, DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME, JWT_SECRET
 
 <com>
 
@@ -42,7 +40,7 @@ Use a Gmail **App Password**, not the normal Gmail password. `CORS_ORIGINS` must
 3. Frontend stores the JWT and sends it as `Authorization: Bearer <token>` for every room/booking request.
 4. Guest checks available rooms for a stay period.
 5. Guest selects rooms. The server checks again inside a database transaction and creates a 10-minute hold after the email code is verified.
-6. The website shows the held booking details. When the guest submits that final review page, the server converts the hold to a confirmed booking and emails confirmation with the calculated total.
+6. The website shows the held booking details and collects faculty in-charge name/email. The guest can either complete Razorpay checkout (the API verifies its signature before confirming and notifying) or use the explicitly labelled demo option (booking confirmed, payment remains pending/not paid, with demo-marked notifications).
 
 The code is stored as a bcrypt hash. It cannot be read from the database or returned by the API. Requesting a new code safely replaces the old secret after verification.
 
@@ -59,7 +57,10 @@ All responses are JSON. Every endpoint after authentication requires the bearer 
 | `GET` | `/api/rooms/available` | No | Show free rooms for two dates and the ₹300 room-night rate. |
 | `GET` | `/api/rooms` | No | List every physical room. |
 | `POST` | `/api/bookings/holds` | Yes | Recheck rooms and create a timed hold with its price total. |
-| `POST` | `/api/bookings/holds/:requestId/confirm` | Yes | Confirm the caller's active hold. |
+| `POST` | `/api/bookings/holds/:requestId/confirm` | Yes | Legacy endpoint; rejects confirmation unless using the verified payment flow. |
+| `POST` | `/api/bookings/holds/:requestId/confirm-demo` | Yes | Confirm a clearly marked demo booking without contacting Razorpay. |
+| `POST` | `/api/payments/create-order` | Yes | Create a Razorpay order for an active booking hold. |
+| `POST` | `/api/payments/verify` | Yes | Verify the Razorpay signature and confirm payment/booking. |
 
 ### Request examples
 

@@ -3,13 +3,28 @@ import { expireHolds,
          getAvailableRooms } from "../repository/roomRepository.js";
 import { ROOM_PRICE_PER_DAY } from "../service/pricingService.js";
 
-/** Returns true only when dates are YYYY-MM-DD and the stay is at least one night. */
+/** Validates API date strings and MySQL DATE values for a non-empty stay. */
 export function validDates(inDate, outDate) {
-  const isCalendarDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || "")
-    && new Date(`${value}T00:00:00.000Z`).toISOString().slice(0, 10) === value;
-  return isCalendarDate(inDate)
-    && isCalendarDate(outDate)
-    && outDate > inDate;
+  const toCalendarDate = (value) => {
+    if (value instanceof Date) {
+      if (Number.isNaN(value.getTime())) return null;
+      return [
+        String(value.getUTCFullYear()).padStart(4, "0"),
+        String(value.getUTCMonth() + 1).padStart(2, "0"),
+        String(value.getUTCDate()).padStart(2, "0"),
+      ].join("-");
+    }
+
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+      ? value
+      : null;
+  };
+
+  const checkIn = toCalendarDate(inDate);
+  const checkOut = toCalendarDate(outDate);
+  return Boolean(checkIn && checkOut && checkOut > checkIn);
 }
 
 /** GET /api/rooms - returns all physical guest rooms. */

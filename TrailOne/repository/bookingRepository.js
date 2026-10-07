@@ -17,7 +17,7 @@ async function hasColumn(connectionOrPool, tableName, columnName) {
   return rows.length > 0;
 }
 
-export async function createHold(connection, { customerId, inDate, outDate, roomIds, facultyInChargeName = "", facultyInChargeEmail }) {
+export async function createHold(connection, { customerId, inDate, outDate, roomIds, facultyInChargeName = "", facultyInChargeEmail = "" }) {
   const requestReference = reference("REQ");
   const cleanFacultyName = String(facultyInChargeName || "").trim();
   const cleanFacultyEmail = String(facultyInChargeEmail || "").trim().toLowerCase();
@@ -30,8 +30,8 @@ export async function createHold(connection, { customerId, inDate, outDate, room
     : `INSERT INTO booking_requests (RequestReference, CustomerId, FacultyInChargeEmail, InDate, OutDate, ExpiresAt)
       VALUES (?, ?, ?, ?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE))`,
     supportsFacultyInCharge
-    ? [requestReference, customerId, cleanFacultyName, cleanFacultyEmail, inDate, outDate, Number(process.env.HOLD_MINUTES || 10)]
-    : [requestReference, customerId, cleanFacultyEmail, inDate, outDate, Number(process.env.HOLD_MINUTES || 10)]
+    ? [requestReference, customerId, cleanFacultyName || null, cleanFacultyEmail || null, inDate, outDate, Number(process.env.HOLD_MINUTES || 10)]
+    : [requestReference, customerId, cleanFacultyEmail || null, inDate, outDate, Number(process.env.HOLD_MINUTES || 10)]
   );
 
   for (const roomId of roomIds) {
@@ -39,6 +39,19 @@ export async function createHold(connection, { customerId, inDate, outDate, room
   }
 
   return { requestId: result.insertId, requestReference };
+}
+
+export async function updateHoldFacultyInCharge(connection, requestId, customerId, name, email) {
+  const hasName = await hasColumn(connection, "booking_requests", "FacultyInChargeName");
+  const hasEmail = await hasColumn(connection, "booking_requests", "FacultyInChargeEmail");
+  if (!hasName || !hasEmail) {
+    throw new Error("Booking faculty fields are missing. Apply the booking schema adjustments before confirming.");
+  }
+
+  await connection.execute(
+    "UPDATE booking_requests SET FacultyInChargeName = ?, FacultyInChargeEmail = ? WHERE RequestId = ? AND CustomerId = ?",
+    [name, email, requestId, customerId]
+  );
 }
 
 export async function findHoldForCustomer(connection, requestId, customerId) {
@@ -121,9 +134,9 @@ export async function markBookingPaid(connection, bookingId) {
 }
 
 /** Returns the verified guest and every room in a newly created temporary hold. */
-export async function holdDetails(requestId, customerId) {
-  const supportsFacultyInCharge = await hasColumn(pool, "booking_requests", "FacultyInChargeName");
-  const [requests] = await pool.execute(
+export async function holdDetails(requestId, customerId, connection = pool) {
+  const supportsFacultyInCharge = await hasColumn(connection, "booking_requests", "FacultyInChargeName");
+  const [requests] = await connection.execute(
     `SELECT br.RequestId, br.RequestReference, br.RequestStatus,
             br.InDate, br.OutDate, br.CreatedAt, br.ExpiresAt,
             ${supportsFacultyInCharge ? "br.FacultyInChargeName" : "NULL AS FacultyInChargeName"},
@@ -139,7 +152,7 @@ export async function holdDetails(requestId, customerId) {
     return null;
   }
 
-  const [rooms] = await pool.execute(
+  const [rooms] = await connection.execute(
     `SELECT r.RoomId, r.RoomNo, r.Floor
      FROM request_rooms rr
      JOIN rooms r ON r.RoomId = rr.RoomId

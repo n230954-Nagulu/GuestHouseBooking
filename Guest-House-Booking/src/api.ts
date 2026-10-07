@@ -1,6 +1,6 @@
-const API_BASE_URL = (
-  import.meta.env.DEV ? "/api" : import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api"
-).replace(/\/$/, "")
+const API_BASE_URL = import.meta.env.DEV
+  ? "/api"
+  : (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "")
 
 export type Session = {
   token: string
@@ -25,6 +25,12 @@ export type Booking = {
   roomCount: number
   nights: number
   totalAmount: number
+  BookingStatus?: string
+  PaymentStatus?: string
+  FullName?: string
+  Email?: string
+  FacultyInChargeName?: string
+  FacultyInChargeEmail?: string
 }
 
 export type EmailNotification = {
@@ -35,6 +41,10 @@ export type EmailNotification = {
 type ApiResponse<T> = T & { success: boolean; message?: string }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
+  if (!API_BASE_URL) {
+    throw new Error("VITE_API_BASE_URL must be set to the backend API URL for production.")
+  }
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers: { "Content-Type": "application/json", ...options.headers },
@@ -74,21 +84,35 @@ export type BookingHold = {
   }
 }
 
-export async function createBookingHold(session: Session, inDate: string, outDate: string, roomIds: number[], facultyInChargeName: string, facultyInChargeEmail: string) {
+export async function createBookingHold(session: Session, inDate: string, outDate: string, roomIds: number[]) {
   const headers = { Authorization: `Bearer ${session.token}` }
   return request<BookingHold>("/bookings/holds", {
     method: "POST",
     headers,
-    body: JSON.stringify({ customerId: session.customer.customerId, inDate, outDate, roomIds, facultyInChargeName, facultyInChargeEmail }),
+    body: JSON.stringify({ customerId: session.customer.customerId, inDate, outDate, roomIds }),
   })
 }
 
-export async function createPaymentOrder(session: Session, requestId: number) {
+export async function createPaymentOrder(session: Session, requestId: number, facultyInChargeName: string, facultyInChargeEmail: string) {
   const headers = { Authorization: `Bearer ${session.token}` }
   return request<{ order: { id: string; amount: number; currency: string; keyId: string; receipt: string } }>("/payments/create-order", {
     method: "POST",
     headers,
-    body: JSON.stringify({ requestId }),
+    body: JSON.stringify({ requestId, facultyInChargeName, facultyInChargeEmail }),
+  })
+}
+
+export async function confirmDemoBooking(session: Session, requestId: number, facultyInChargeName: string, facultyInChargeEmail: string) {
+  const headers = { Authorization: `Bearer ${session.token}` }
+  return request<{
+    booking: Booking
+    paymentMode: "DEMO"
+    payment: { method: "DEMO"; status: "PENDING"; verificationStatus: "PENDING" }
+    emailNotifications?: EmailNotification[]
+  }>(`/bookings/holds/${requestId}/confirm-demo`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ facultyInChargeName, facultyInChargeEmail }),
   })
 }
 

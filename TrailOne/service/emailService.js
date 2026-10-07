@@ -34,6 +34,7 @@ export async function sendBookingConfirmationEmails(details, facultyInChargeEmai
 
     const bookingId = details.BookingId || details.bookingId || "N/A";
     const bookingReference = details.BookingReference || details.bookingReference || `BOOKING-${bookingId}`;
+    const isDemoBooking = details.PaymentMethod === "DEMO";
     const occupantName = details.FullName || details.fullName || details.OccupantName || "Guest";
     const occupantEmail = details.Email || details.email || details.OccupantEmail;
     const initiatorName = details.BookingInitiatorName || details.InitiatorName || occupantName;
@@ -61,7 +62,7 @@ export async function sendBookingConfirmationEmails(details, facultyInChargeEmai
     const uniqueRecipients = [];
     const seen = new Set();
     for (const recipient of recipients) {
-        const key = `${recipient.type}:${recipient.email.toLowerCase()}`;
+        const key = recipient.email.toLowerCase();
         if (!seen.has(key)) {
             seen.add(key);
             uniqueRecipients.push(recipient);
@@ -71,13 +72,14 @@ export async function sendBookingConfirmationEmails(details, facultyInChargeEmai
     const results = [];
 
     for (const recipient of uniqueRecipients) {
+        const subjectPrefix = isDemoBooking ? "[DEMO] " : "";
         const subject = recipient.type === "occupant"
-            ? `Booking Confirmation - ${bookingReference}`
+            ? `${subjectPrefix}Booking Confirmation - ${bookingReference}`
             : recipient.type === "faculty-in-charge"
-                ? `Guest House Booking Notification - ${bookingReference}`
+                ? `${subjectPrefix}Guest House Booking Notification - ${bookingReference}`
                 : recipient.type === "security"
-                    ? `Security Check-in Notification - ${bookingReference}`
-                    : `Booking Confirmation for Initiator - ${bookingReference}`;
+                    ? `${subjectPrefix}Security Check-in Notification - ${bookingReference}`
+                    : `${subjectPrefix}Booking Confirmation for Initiator - ${bookingReference}`;
 
         const text = [
             `Booking confirmation for ${recipient.name}`,
@@ -90,6 +92,7 @@ export async function sendBookingConfirmationEmails(details, facultyInChargeEmai
             `Check-in: ${formatDate(checkIn)}`,
             `Check-out: ${formatDate(checkOut)}`,
             `Payment Status: ${paymentStatus}`,
+            ...(isDemoBooking ? ["Demo Booking — Payment not processed through Razorpay."] : []),
             `Amount: ${formatCurrency(paymentAmount)}`,
         ].join("\n");
 
@@ -97,7 +100,74 @@ export async function sendBookingConfirmationEmails(details, facultyInChargeEmai
             from: `"Hotel Booking System" <${process.env.EMAIL_USER}>`,
             subject,
             text,
-            html: `<div style="font-family: Arial, sans-serif; padding: 20px;"><h2>Booking Confirmation</h2><p>Dear ${escapeHtml(recipient.name)},</p><p><strong>Booking ID:</strong> ${escapeHtml(bookingId)}<br /><strong>Reference:</strong> ${escapeHtml(bookingReference)}<br /><strong>Occupant:</strong> ${escapeHtml(occupantName)}<br /><strong>Initiator:</strong> ${escapeHtml(initiatorName)}<br /><strong>Faculty In-Charge:</strong> ${escapeHtml(facultyInChargeName)}<br /><strong>Room:</strong> ${escapeHtml(roomLabel)}<br /><strong>Check-in:</strong> ${escapeHtml(formatDate(checkIn))}<br /><strong>Check-out:</strong> ${escapeHtml(formatDate(checkOut))}<br /><strong>Payment Status:</strong> ${escapeHtml(paymentStatus)}<br /><strong>Amount:</strong> ${escapeHtml(formatCurrency(paymentAmount))}</p></div>`,
+            html: `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${isDemoBooking ? "[DEMO] " : ""}Booking Confirmation</title>
+</head>
+<body style="margin:0;padding:0;background:#f2f5f8;color:#243447;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px;background:#f2f5f8;">
+        <tr><td align="center">
+            <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e4eaf0;border-radius:14px;overflow:hidden;">
+                <tr>
+                    <td style="padding:30px 32px;background:#173b5e;color:#fff;">
+                        <p style="margin:0 0 10px;color:#d9c28f;font-size:12px;letter-spacing:2px;text-transform:uppercase;">RGUKT Guest House</p>
+                        <h1 style="margin:0;font-size:25px;line-height:1.3;">${isDemoBooking ? "Demo booking confirmed" : "Booking confirmed"}</h1>
+                        <p style="margin:10px 0 0;color:#e4edf5;font-size:14px;line-height:1.6;">${isDemoBooking ? "This booking is for demonstration purposes; payment was not processed through Razorpay." : "Your stay has been confirmed. We look forward to welcoming you."}</p>
+                    </td>
+                </tr>
+                <tr><td style="padding:26px 32px 12px;">
+                    <p style="margin:0 0 18px;font-size:15px;">Dear <strong>${escapeHtml(recipient.name)}</strong>,</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f8fb;border:1px solid #e4eaf0;border-radius:10px;">
+                        <tr>
+                            <td style="padding:15px 18px;">
+                                <p style="margin:0 0 5px;color:#60758a;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Booking reference</p>
+                                <p style="margin:0;color:#173b5e;font-size:20px;font-weight:700;">${escapeHtml(bookingReference)}</p>
+                            </td>
+                            <td align="right" style="padding:15px 18px;">
+                                <span style="display:inline-block;padding:7px 11px;border-radius:20px;background:${isDemoBooking ? "#fff3d8" : "#e6f4ec"};color:${isDemoBooking ? "#875d00" : "#237447"};font-size:12px;font-weight:700;">${isDemoBooking ? "DEMO" : escapeHtml(paymentStatus)}</span>
+                            </td>
+                        </tr>
+                    </table>
+                </td></tr>
+                <tr><td style="padding:14px 32px 4px;">
+                    <h2 style="margin:0 0 12px;color:#173b5e;font-size:16px;">Stay details</h2>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr><td style="padding:11px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Check-in</td><td style="padding:11px;border:1px solid #e7edf2;font-size:14px;font-weight:600;">${escapeHtml(formatDate(checkIn))}</td></tr>
+                        <tr><td style="padding:11px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Check-out</td><td style="padding:11px;border:1px solid #e7edf2;font-size:14px;font-weight:600;">${escapeHtml(formatDate(checkOut))}</td></tr>
+                        <tr><td style="padding:11px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Room(s)</td><td style="padding:11px;border:1px solid #e7edf2;font-size:14px;">${escapeHtml(roomLabel)}</td></tr>
+                    </table>
+                </td></tr>
+                <tr><td style="padding:18px 32px 4px;">
+                    <h2 style="margin:0 0 10px;color:#173b5e;font-size:16px;">Guest and booking contacts</h2>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                        <tr><td style="padding:7px 0;color:#60758a;font-size:13px;width:38%;">Occupant</td><td style="padding:7px 0;font-size:14px;">${escapeHtml(occupantName)}</td></tr>
+                        <tr><td style="padding:7px 0;color:#60758a;font-size:13px;">Booking initiator</td><td style="padding:7px 0;font-size:14px;">${escapeHtml(initiatorName)}</td></tr>
+                        <tr><td style="padding:7px 0;color:#60758a;font-size:13px;">Faculty in-charge</td><td style="padding:7px 0;font-size:14px;">${escapeHtml(facultyInChargeName)}</td></tr>
+                    </table>
+                </td></tr>
+                <tr><td style="padding:18px 32px 28px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#173b5e;border-radius:10px;">
+                        <tr>
+                            <td style="padding:15px 18px;color:#fff;">
+                                <p style="margin:0 0 5px;color:#d9e5ef;font-size:12px;">Payment status: ${escapeHtml(paymentStatus)}</p>
+                                <p style="margin:0;font-size:13px;">${isDemoBooking ? "No payment was processed" : "Booking total"}</p>
+                            </td>
+                            <td align="right" style="padding:15px 18px;color:#fff;font-size:20px;font-weight:700;">${escapeHtml(formatCurrency(paymentAmount))}</td>
+                        </tr>
+                    </table>
+                    <p style="margin:16px 0 0;color:#718096;font-size:12px;">Booking ID: ${escapeHtml(bookingId)}</p>
+                </td></tr>
+                <tr><td align="center" style="padding:17px 24px;background:#f5f8fb;border-top:1px solid #e4eaf0;color:#718096;font-size:12px;line-height:1.6;">RGUKT Guest House · Nuzvid<br>Please keep this email for your records.</td></tr>
+            </table>
+        </td></tr>
+    </table>
+</body>
+</html>
+`,
         });
         results.push(result);
     }
@@ -126,6 +196,11 @@ export async function sendBookingConfirmation(details, facultyInChargeEmail = de
         details.Phone ||
         details.phone ||
         "Not provided";
+
+    const facultyInChargeName =
+        details.FacultyInChargeName ||
+        details.facultyInChargeName ||
+        "Faculty In-Charge";
 
     const bookingId =
         details.BookingId ||
@@ -250,6 +325,7 @@ GUEST DETAILS
 Name             : ${customerName}
 Email            : ${customerEmail}
 Phone            : ${customerPhone}
+Faculty In-Charge: ${facultyInChargeName}
 
 ROOM DETAILS
 ----------------------------------------
@@ -270,306 +346,121 @@ Hotel Booking System
 
     const html = `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Booking Confirmation</title>
 </head>
-
-<body style="
-    margin: 0;
-    padding: 0;
-    background-color: #f5f5f5;
-    font-family: Arial, Helvetica, sans-serif;
-">
-
-<div style="
-    max-width: 700px;
-    margin: 30px auto;
-    background: #ffffff;
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid #dddddd;
-">
-
-    <div style="
-        background: #1f2937;
-        color: white;
-        padding: 25px;
-        text-align: center;
-    ">
-        <h1 style="margin: 0;">
-            Booking Confirmed
-        </h1>
-
-        <p style="margin: 8px 0 0;">
-            Thank you for booking with us
-        </p>
-    </div>
-
-
-    <div style="padding: 30px;">
-
-        <p>
-            Dear <strong>${escapeHtml(customerName)}</strong>,
-        </p>
-
-        <p>
-            Your hotel booking has been successfully confirmed.
-        </p>
-
-
-        <h2 style="
-            border-bottom: 1px solid #dddddd;
-            padding-bottom: 10px;
-        ">
-            Booking Details
-        </h2>
-
-        <table style="
-            width: 100%;
-            border-collapse: collapse;
-        ">
-
-            <tr>
-                <td style="${labelStyle}">
-                    Booking ID
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(bookingId)}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Booking Reference
-                </td>
-
-                <td style="${valueStyle}">
-                    <strong>${escapeHtml(bookingReference)}</strong>
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Status
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(status)}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Check-in
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(formatDate(checkIn))}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Check-out
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(formatDate(checkOut))}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Rate
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(formatCurrency(pricePerRoomPerDay))} per room per night
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Total
-                </td>
-
-                <td style="${valueStyle}">
-                    <strong>${escapeHtml(formatCurrency(totalAmount))}</strong> (${roomCount} room(s) × ${nights} night(s))
-                </td>
-            </tr>
-
-        </table>
-
-
-        <h2 style="
-            margin-top: 30px;
-            border-bottom: 1px solid #dddddd;
-            padding-bottom: 10px;
-        ">
-            Guest Details
-        </h2>
-
-        <table style="
-            width: 100%;
-            border-collapse: collapse;
-        ">
-
-            <tr>
-                <td style="${labelStyle}">
-                    Name
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(customerName)}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Email
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(customerEmail)}
-                </td>
-            </tr>
-
-            <tr>
-                <td style="${labelStyle}">
-                    Phone
-                </td>
-
-                <td style="${valueStyle}">
-                    ${escapeHtml(customerPhone)}
-                </td>
-            </tr>
-
-        </table>
-
-
-        <h2 style="
-            margin-top: 30px;
-            border-bottom: 1px solid #dddddd;
-            padding-bottom: 10px;
-        ">
-            Room Details
-        </h2>
-
-        <table style="
-            width: 100%;
-            border-collapse: collapse;
-            border: 1px solid #dddddd;
-        ">
-
-            <thead>
-                <tr>
-                    <th style="${headerStyle}">
-                        #
-                    </th>
-
-                    <th style="${headerStyle}">
-                        Room Number
-                    </th>
-
-                    <th style="${headerStyle}">
-                        Room ID
-                    </th>
-
-                    <th style="${headerStyle}">
-                        Floor
-                    </th>
-                </tr>
-            </thead>
-
-            <tbody>
-
-                ${
-                    rooms.length
-                        ? rooms.map((room, index) => {
-
-                            const roomId =
-                                room.RoomId ||
-                                room.roomId ||
-                                "N/A";
-
-                            const roomNo =
-                                room.RoomNo ||
-                                room.roomNo ||
-                                "N/A";
-
-                            const floor =
-                                room.Floor ||
-                                room.floor ||
-                                "N/A";
-
-                            return `
+<body style="margin:0;padding:0;background-color:#f2f5f8;font-family:Arial,Helvetica,sans-serif;color:#243447;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f2f5f8;padding:32px 12px;">
+        <tr>
+            <td align="center">
+                <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e4eaf0;">
+                    <tr>
+                        <td style="padding:30px 32px;background:#173b5e;color:#ffffff;">
+                            <p style="margin:0 0 10px;font-size:12px;letter-spacing:2px;text-transform:uppercase;color:#d9c28f;">RGUKT Guest House</p>
+                            <h1 style="margin:0;font-size:26px;line-height:1.3;font-weight:700;">Booking confirmed</h1>
+                            <p style="margin:10px 0 0;font-size:15px;line-height:1.6;color:#e4edf5;">Your stay is booked. We look forward to welcoming you.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:28px 32px 10px;">
+                            <p style="margin:0 0 18px;font-size:15px;line-height:1.6;">Dear <strong>${escapeHtml(customerName)}</strong>,</p>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f8fb;border:1px solid #e4eaf0;border-radius:10px;">
                                 <tr>
-                                    <td style="${cellStyle}">
-                                        ${index + 1}
+                                    <td style="padding:16px 18px;">
+                                        <p style="margin:0 0 5px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:#60758a;">Booking reference</p>
+                                        <p style="margin:0;font-size:20px;font-weight:700;color:#173b5e;">${escapeHtml(bookingReference)}</p>
                                     </td>
-
-                                    <td style="${cellStyle}">
-                                        ${escapeHtml(roomNo)}
-                                    </td>
-
-                                    <td style="${cellStyle}">
-                                        ${escapeHtml(roomId)}
-                                    </td>
-
-                                    <td style="${cellStyle}">
-                                        ${escapeHtml(floor)}
+                                    <td align="right" style="padding:16px 18px;">
+                                        <span style="display:inline-block;padding:7px 11px;border-radius:20px;background:#e6f4ec;color:#237447;font-size:12px;font-weight:700;">${escapeHtml(status)}</span>
                                     </td>
                                 </tr>
-                            `;
-
-                        }).join("")
-                        : `
-                            <tr>
-                                <td colspan="4" style="${cellStyle}">
-                                    Room details unavailable
-                                </td>
-                            </tr>
-                        `
-                }
-
-            </tbody>
-
-        </table>
-
-
-        <p style="
-            margin-top: 30px;
-            color: #555555;
-        ">
-            Booking created on:
-            <strong>${escapeHtml(formatDateTime(createdAt))}</strong>
-        </p>
-
-        <p style="
-            margin-top: 30px;
-            color: #555555;
-        ">
-            Please keep this email for your records.
-        </p>
-
-    </div>
-
-
-    <div style="
-        background: #f3f4f6;
-        padding: 20px;
-        text-align: center;
-        color: #666666;
-        font-size: 13px;
-    ">
-        Hotel Booking System
-    </div>
-
-</div>
-
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:16px 32px 4px;">
+                            <h2 style="margin:0 0 12px;font-size:16px;color:#173b5e;">Stay details</h2>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                                <tr>
+                                    <td style="padding:12px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Check-in</td>
+                                    <td style="padding:12px;border:1px solid #e7edf2;font-size:14px;font-weight:600;">${escapeHtml(formatDate(checkIn))}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:12px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Check-out</td>
+                                    <td style="padding:12px;border:1px solid #e7edf2;font-size:14px;font-weight:600;">${escapeHtml(formatDate(checkOut))}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:12px;border:1px solid #e7edf2;background:#f8fafc;color:#60758a;font-size:13px;">Rooms and nights</td>
+                                    <td style="padding:12px;border:1px solid #e7edf2;font-size:14px;">${roomCount} room(s) · ${nights} night(s)</td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:20px 32px 4px;">
+                            <h2 style="margin:0 0 12px;font-size:16px;color:#173b5e;">Guest details</h2>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                                <tr><td style="padding:8px 0;color:#60758a;font-size:13px;width:38%;">Name</td><td style="padding:8px 0;font-size:14px;">${escapeHtml(customerName)}</td></tr>
+                                <tr><td style="padding:8px 0;color:#60758a;font-size:13px;">Email</td><td style="padding:8px 0;font-size:14px;word-break:break-word;">${escapeHtml(customerEmail)}</td></tr>
+                                <tr><td style="padding:8px 0;color:#60758a;font-size:13px;">Phone</td><td style="padding:8px 0;font-size:14px;">${escapeHtml(customerPhone)}</td></tr>
+                                <tr><td style="padding:8px 0;color:#60758a;font-size:13px;">Faculty in-charge</td><td style="padding:8px 0;font-size:14px;">${escapeHtml(facultyInChargeName)}</td></tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:16px 32px 4px;">
+                            <h2 style="margin:0 0 12px;font-size:16px;color:#173b5e;">Room allocation</h2>
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                                <thead>
+                                    <tr>
+                                        <th align="left" style="padding:10px;border:1px solid #e7edf2;background:#f5f8fb;color:#60758a;font-size:12px;">Room</th>
+                                        <th align="left" style="padding:10px;border:1px solid #e7edf2;background:#f5f8fb;color:#60758a;font-size:12px;">Room ID</th>
+                                        <th align="left" style="padding:10px;border:1px solid #e7edf2;background:#f5f8fb;color:#60758a;font-size:12px;">Floor</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${
+                                        rooms.length
+                                            ? rooms.map((room) => `
+                                                <tr>
+                                                    <td style="padding:10px;border:1px solid #e7edf2;font-size:13px;">${escapeHtml(room.RoomNo || room.roomNo || "N/A")}</td>
+                                                    <td style="padding:10px;border:1px solid #e7edf2;font-size:13px;">${escapeHtml(room.RoomId || room.roomId || "N/A")}</td>
+                                                    <td style="padding:10px;border:1px solid #e7edf2;font-size:13px;">${escapeHtml(room.Floor || room.floor || "N/A")}</td>
+                                                </tr>
+                                            `).join("")
+                                            : `<tr><td colspan="3" style="padding:12px;border:1px solid #e7edf2;color:#60758a;font-size:13px;">Room details unavailable</td></tr>`
+                                    }
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:20px 32px 28px;">
+                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#173b5e;border-radius:10px;">
+                                <tr>
+                                    <td style="padding:16px 18px;color:#ffffff;">
+                                        <p style="margin:0 0 5px;font-size:12px;color:#d9e5ef;">Rate: ${escapeHtml(formatCurrency(pricePerRoomPerDay))} per room per night</p>
+                                        <p style="margin:0;font-size:13px;color:#ffffff;">Total booking amount</p>
+                                    </td>
+                                    <td align="right" style="padding:16px 18px;color:#ffffff;font-size:21px;font-weight:700;">${escapeHtml(formatCurrency(totalAmount))}</td>
+                                </tr>
+                            </table>
+                            <p style="margin:18px 0 0;color:#718096;font-size:12px;line-height:1.6;">Booking ID: ${escapeHtml(bookingId)}<br>Created: ${escapeHtml(formatDateTime(createdAt))}</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align="center" style="padding:18px 24px;background:#f5f8fb;border-top:1px solid #e4eaf0;color:#718096;font-size:12px;line-height:1.6;">
+                            RGUKT Guest House · Nuzvid<br>
+                            Please keep this email for your booking records.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
 `;

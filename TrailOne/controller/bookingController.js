@@ -1,13 +1,17 @@
 import pool from "../config/db.js";
+import crypto from "node:crypto";
 import {
   bookingDetails,
   createBookingFromHold,
   createHold as persistHold,
+  findBookingByRequestId,
   findHoldForCustomer,
   holdDetails,
+  updateHoldFacultyInCharge,
 } from "../repository/bookingRepository.js";
 import { expireHolds, getAvailableRooms, lockSelectedRooms } from "../repository/roomRepository.js";
-import { sendBookingConfirmation } from "../service/emailService.js";
+import { createPaymentRecord, findDemoPaymentByRequestId, findPaymentByRequestId } from "../repository/paymentRepository.js";
+import { sendBookingConfirmationEmails } from "../service/emailService.js";
 import { bookingPrice } from "../service/pricingService.js";
 import { validDates } from "./roomController.js";
 
@@ -28,20 +32,12 @@ export async function createHold(req, res, next) {
   const { inDate, outDate } = req.body;
   const customerId = Number(req.body.customerId);
   const roomIds = parseRoomIds(req.body.roomIds);
-  const facultyInChargeName = normalizeFacultyInCharge(req.body.facultyInChargeName);
-  const facultyInChargeEmail = normalizeFacultyEmail(req.body.facultyInChargeEmail);
 
   if (!Number.isSafeInteger(customerId) || customerId !== req.user.customerId)
     return res.status(403).json({ success: false, message: "Customer ID does not match the authenticated user." });
 
   if (!validDates(inDate, outDate) || !roomIds)
     return res.status(400).json({ success: false, message: "Provide valid dates and at least one room ID." });
-
-  if (facultyInChargeName.length < 2 || facultyInChargeName.length > 120)
-    return res.status(400).json({ success: false, message: "Provide a faculty in-charge name between 2 and 120 characters." });
-
-  if (facultyInChargeEmail.length > 254 || !validEmail.test(facultyInChargeEmail))
-    return res.status(400).json({ success: false, message: "Provide a valid faculty in-charge email address." });
 
   const connection = await pool.getConnection();
 
@@ -69,8 +65,6 @@ export async function createHold(req, res, next) {
       inDate,
       outDate,
       roomIds,
-      facultyInChargeName,
-      facultyInChargeEmail,
     });
 
     await connection.commit();
@@ -109,47 +103,132 @@ export async function createHold(req, res, next) {
   }
 }
 
-/** POST /api/bookings/holds/:requestId/confirm - legacy confirmation endpoint kept for compatibility. */
-export async function confirmBooking(req, res, next) {
+/** Legacy endpoint retained but cannot confirm a booking without verified payment. */
+export function confirmBooking(req, res) {
+  return res.status(409).json({
+    success: false,
+    message: "Use the authenticated demo-confirm or verified Razorpay payment flow to confirm a booking.",
+  });
+}
+
+export async function confirmDemoBooking(req, res, next) {
   const requestId = Number(req.params.requestId);
-  if (!Number.isSafeInteger(requestId) || requestId < 1)
-    return res.status(400).json({ success: false, message: "A valid request ID is required." });
+  const facultyInChargeName = normalizeFacultyInCharge(req.body.facultyInChargeName);
+  const facultyInChargeEmail = normalizeFacultyEmail(req.body.facultyInChargeEmail);
 
-  const connection = await pool.getConnection();
+  if (!Number.isSafeInteger(requestId) || requestId < 1) {
+    return res.status(400).json({ success: false, message: "A valid booking request ID is required." });
+  }
+  if (facultyInChargeName.length < 2 || facultyInChargeName.length > 120) {
+    return res.status(400).json({ success: false, message: "Provide a faculty in-charge name between 2 and 120 characters." });
+  }
+  if (facultyInChargeEmail.length > 254 || !validEmail.test(facultyInChargeEmail)) {
+    return res.status(400).json({ success: false, message: "Provide a valid faculty in-charge email address." });
+  }
 
+  let connection;
   try {
+    connection = await pool.getConnection();
     await connection.beginTransaction();
     await expireHolds(connection);
-    const request = await findHoldForCustomer(connection, requestId, req.user.customerId);
 
-    if (!request || request.RequestStatus !== "HOLD" || new Date(request.ExpiresAt) <= new Date()) {
+    const request = await findHoldForCustomer(connection, requestId, req.user.customerId);
+    if (!request) {
       await connection.rollback();
-      return res.status(409).json({ success: false, message: "This room hold has expired or cannot be confirmed." });
+      return res.status(404).json({ success: false, message: "Booking request was not found for this customer." });
     }
 
+    const existingBooking = await findBookingByRequestId(connection, requestId);
+    if (existingBooking) {
+      const demoPayment = await findDemoPaymentByRequestId(connection, requestId);
+      if (demoPayment && existingBooking.BookingStatus === "CONFIRMED") {
+        const existingDetails = await bookingDetails(existingBooking.BookingId, connection);
+        const existingPricing = bookingPrice(existingDetails.rooms.length, existingDetails.InDate, existingDetails.OutDate);
+        await connection.commit();
+        return res.status(200).json({
+          success: true,
+          message: "Demo booking was already confirmed.",
+          paymentMode: "DEMO",
+          payment: { method: "DEMO", status: "PENDING", verificationStatus: "PENDING" },
+          booking: { ...existingDetails, ...existingPricing },
+          emailNotifications: [],
+        });
+      }
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: "This booking request has already been confirmed using another payment method." });
+    }
+
+    const existingPayment = await findPaymentByRequestId(connection, requestId);
+    if (existingPayment?.PaymentMethod === "RAZORPAY") {
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: "A Razorpay payment attempt already exists for this hold. Complete that payment or start a new booking to use demo mode." });
+    }
+
+    if (request.RequestStatus !== "HOLD" || new Date(request.ExpiresAt) <= new Date()) {
+      await connection.rollback();
+      return res.status(409).json({ success: false, message: "This booking hold has expired or is no longer available." });
+    }
+    if (!validDates(request.InDate, request.OutDate)) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, message: "The booking dates are invalid." });
+    }
+
+    const details = await holdDetails(requestId, req.user.customerId, connection);
+    if (!details || details.FullName?.trim().length < 2 || !validEmail.test(details.Email || "") || !details.Phone?.trim()) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, message: "Verified occupant name, email, and phone details are required." });
+    }
+    if (!details.rooms?.length) {
+      await connection.rollback();
+      return res.status(400).json({ success: false, message: "At least one room must be selected before confirming the booking." });
+    }
+
+    await updateHoldFacultyInCharge(connection, requestId, req.user.customerId, facultyInChargeName, facultyInChargeEmail);
+    request.FacultyInChargeName = facultyInChargeName;
+    request.FacultyInChargeEmail = facultyInChargeEmail;
     const booking = await createBookingFromHold(connection, request);
-    await connection.commit();
-    const details = await bookingDetails(booking.bookingId);
     const pricing = bookingPrice(details.rooms.length, request.InDate, request.OutDate);
-    const bookingWithPricing = { ...details, ...pricing };
+    await createPaymentRecord(connection, {
+      requestId,
+      bookingId: booking.bookingId,
+      razorpayOrderId: `DEMO-${requestId}-${crypto.randomUUID()}`,
+      amount: pricing.totalAmount,
+      currency: "INR",
+      paymentStatus: "PENDING",
+      verificationStatus: "PENDING",
+      paymentMethod: "DEMO",
+      failureReason: "Demo booking: payment was not processed through Razorpay.",
+    });
+    const bookingDetailsResult = await bookingDetails(booking.bookingId, connection);
+    await connection.commit();
 
     let emailNotifications = [];
     try {
-      emailNotifications = await sendBookingConfirmation(bookingWithPricing, request.FacultyInChargeEmail);
+      emailNotifications = await sendBookingConfirmationEmails(
+        {
+          ...bookingDetailsResult,
+          ...pricing,
+          PaymentMethod: "DEMO",
+          PaymentStatus: "DEMO - PAYMENT NOT PROCESSED THROUGH RAZORPAY",
+        },
+        facultyInChargeEmail
+      );
     } catch (error) {
-      console.error("Booking saved but confirmation email failed:", error.message);
+      console.error("Demo booking saved but confirmation email workflow failed:", error.message);
     }
 
     return res.status(201).json({
       success: true,
-      message: "Booking confirmed.",
-      booking: bookingWithPricing,
+      message: "Booking Confirmed — Demo Mode. Payment was not processed through Razorpay.",
+      paymentMode: "DEMO",
+      payment: { method: "DEMO", status: "PENDING", verificationStatus: "PENDING" },
+      booking: { ...bookingDetailsResult, ...pricing },
       emailNotifications: emailNotifications.map(({ recipientType, status }) => ({ recipientType, status })),
     });
   } catch (error) {
-    await connection.rollback();
+    if (connection) await connection.rollback();
     return next(error);
   } finally {
-    connection.release();
+    connection?.release();
   }
 }
