@@ -21,7 +21,7 @@ const localOrigins = process.env.NODE_ENV === "production"
 const allowedOrigins = [
   ...configuredOrigins,
   ...localOrigins,
-  "https://guesthousebooking-frontend.onrender.com"
+  "https://guest-house-booking-frontend.onrender.com"
 ]
   .map((origin) => origin.trim())
   .filter(Boolean);
