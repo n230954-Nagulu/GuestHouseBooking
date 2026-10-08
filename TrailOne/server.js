@@ -18,7 +18,11 @@ const configuredOrigins = [
 const localOrigins = process.env.NODE_ENV === "production"
   ? []
   : ["http://localhost:5173", "http://localhost:8443"];
-const allowedOrigins = [...configuredOrigins, ...localOrigins,"https://guest-house-booking.onrender.com"]
+const allowedOrigins = [
+  ...configuredOrigins,
+  ...localOrigins,
+  "https://guesthousebooking-frontend.onrender.com"
+]
   .map((origin) => origin.trim())
   .filter(Boolean);
 
