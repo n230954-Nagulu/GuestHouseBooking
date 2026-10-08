@@ -62,6 +62,14 @@ app.use("/api/auth", authRouter);
 app.use("/api/rooms", roomRouter);
 app.use("/api/bookings", bookingRouter);
 app.use("/api/payments", paymentRouter);
+
+// Keep root-level aliases for frontend builds that configured the API host
+// without the /api prefix. New builds should use /api/... routes.
+app.use("/auth", authRouter);
+app.use("/rooms", roomRouter);
+app.use("/bookings", bookingRouter);
+app.use("/payments", paymentRouter);
+
 app.use(notFound);
 app.use(errorHandler);
 
