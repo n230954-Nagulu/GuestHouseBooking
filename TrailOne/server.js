@@ -21,16 +21,24 @@ const localOrigins = process.env.NODE_ENV === "production"
 const allowedOrigins = [
   ...configuredOrigins,
   ...localOrigins,
-  "https://guest-house-booking-frontend.onrender.com"
+  "https://guest-house-booking-frontend.onrender.com",
+  "https://guesthousebooking-frontend.onrender.com"
 ]
   .map((origin) => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .map((origin) => {
+    try {
+      return new URL(origin).origin;
+    } catch {
+      return origin.replace(/\/+$/, "");
+    }
+  });
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error("This website is not allowed to use the booking API."));
+      return callback(null, false);
     },
     methods: ["GET", "POST"],
     allowedHeaders: ["Content-Type", "Authorization"],
